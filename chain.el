@@ -102,10 +102,16 @@ Arguments same as for `format'."
     (name &optional polite per-stage on-abort
           &aux (chain (gethash name chain-table)))
   "Call the next function in the chain identified by NAME.
-Pass one argument to this function: the list of functions that
-remain to be run, including the function currently being run,
-which has not yet been taken off the list.  It is not necessary
-to use this argument in any way."
+Also pass NAME on as an argument to this function so it can
+manipulate the chain if necessary, using expressions such as the
+following.
+
+(push (chain-state NAME) #'some extra-function)
+
+The expression (chain-state NAME) returns the list of functions
+that remain to be executed, including the function currently
+being run, it not having been taken off the list at the time of
+call."
   (cl-symbol-macrolet ((running         (nth 0 chain))
                        (state           (nth 1 chain))
                        (last-idle-value (nth 2 chain)))
@@ -127,7 +133,7 @@ to use this argument in any way."
                 (error (chain-echo "Timer was not cancelled before `chain--chomp'")))
               (setf running t)
               (chain-echo "Running: %s" func)
-              (funcall func state) ;; Real work happens here
+              (funcall func name) ;; Real work happens here
               ;; If we're here, we know the above funcall exited without error,
               ;; so we can safely pop that step off the queue.
               (pop state)
