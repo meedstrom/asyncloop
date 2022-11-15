@@ -21,7 +21,7 @@
 ;; Created: 2022-10-30
 ;; Version: 0.1.0
 ;; Keywords: tools
-;; Homepage: https://github.com/meedstrom/deianira
+;; Homepage: https://github.com/meedstrom/chain
 ;; Package-Requires: ((emacs "28.1") (named-timer "0.1"))
 
 ;;; Commentary:
@@ -34,7 +34,7 @@
 ;;
 ;; This library uses builtin timers to help you run a series of functions, we'll
 ;; call it a chain, without blocking Emacs.  Same principle as deferred.el, but
-;; simpler if you haven't learned jsdeferred or its other inspiration sources.
+;; simpler if you're unfamiliar with jsdeferred or its other inspiration sources.
 ;;
 ;; Features:
 ;;
@@ -57,10 +57,12 @@
 (require 'cl-lib)
 (require 'named-timer) ;; prevent bugs every day with this 70-line library
 
-(defvar chain-debug t)
+(defvar chain-debug nil
+  "Whether to make available a buffer of debug messages.")
 
 (defun chain--debug-buffer ()
-  (let ((bufname (concat (unless dei-debug " ") "*chain debug*")))
+  "Buffer to write debug messages to."
+  (let ((bufname (concat (unless chain-debug " ") "*Chain.el debug*")))
     (or (get-buffer bufname)
         (with-current-buffer (get-buffer-create bufname)
           (setq-local truncate-lines t)
@@ -69,7 +71,7 @@
 
 (defun chain-echo (&rest args)
   "Write a message to the debug buffer.
-Arguments same as for `format'."
+Arguments ARGS same as for `format'."
   (with-current-buffer (chain--debug-buffer)
     (goto-char (point-min))
     (insert (apply #'format
@@ -80,38 +82,54 @@ Arguments same as for `format'."
     ;; pass also to caller, enabling e.g. (warn (chain-echo "..."))
     (apply #'format args)))
 
-(defvar chain-table (make-hash-table))
+(defvar chain-table (make-hash-table)
+  "Table where chains are saved with metadata.")
 
 ;;;###autoload
 (defun chain-define (name funs)
+  "Create a chain named NAME.
+FUNS should be a list of functions or lambdas, each taking at
+least one argument."
   (puthash name `(nil nil 0 ,funs) chain-table))
 
-;; Some reasons not to use cl-defstruct:
-;; 1. I will not stop using cl-symbol-macrolet even if I replace "nth 0", "nth
-;;    1", "nth 2" with struct accessors.  Therefore, no coding advantage.
-;; 2. No more bug-proof than before.  I use "nth 0", "nth 1", "nth 2" in very
-;;    few places already, impossible to mistake.
+;; Reason I didn't opt for `cl-defstruct': No more bug-proof than before.
+;; Because I will not stop using `cl-symbol-macrolet', I use "nth 0", "nth 1",
+;; "nth 2" in very few places already, impossible to mistake.  With that in
+;; mind, replacing them with struct accessors is just gilding doorways.
 
 (defmacro chain-running (name)
+  "Get the variable \"running\" from chain identified by NAME."
   `(nth 0 (gethash ,name chain-table)))
 
 (defmacro chain-state (name)
+  "Get the variable \"state\" from chain identified by NAME.
+The expression (chain-state NAME) returns the list of functions
+that remain to be executed for that chain.
+
+If, as most likely, we're called from within a function that's
+called by a running chain, you can schedule a new function
+invocation to be run on the next \"tick\" like this:
+
+(push #'some-additional-function (chain-state NAME))
+
+which can be useful for looping through a list by consuming it
+one item at a time: have a function push itself back onto the
+queue until the list is empty."
   `(nth 1 (gethash ,name chain-table)))
 
 (cl-defun chain--chomp
     (name &optional polite per-stage on-abort
           &aux (chain (gethash name chain-table)))
   "Call the next function in the chain identified by NAME.
-Also pass NAME on as an argument to this function so it can
-manipulate the chain if necessary, using expressions such as the
-following.
+Also pass NAME unmodified as an argument to this function so it
+can manipulate the running chain if necessary, primarily with
+`chain-state'.
 
-(push (chain-state NAME) #'some extra-function)
+Finally, schedule another invocation of `chain--chomp'.  Optional
+argument POLITE ensures waiting for at least 1 second of idle
+time before invoking.
 
-The expression (chain-state NAME) returns the list of functions
-that remain to be executed, including the function currently
-being run, it not having been taken off the list at the time of
-call."
+PER-STAGE and ON-ABORT same as in `chain-run'."
   (cl-symbol-macrolet ((running         (nth 0 chain))
                        (state           (nth 1 chain))
                        (last-idle-value (nth 2 chain)))
@@ -122,7 +140,7 @@ call."
           (setf running nil)
           (setf state nil)
           (funcall on-abort))
-      (let ((func (car-safe state)))
+      (let ((func (pop state)))
         (condition-case err
             (progn
               ;; In case something called this function twice and it wasn't the
@@ -134,9 +152,6 @@ call."
               (setf running t)
               (chain-echo "Running: %s" func)
               (funcall func name) ;; Real work happens here
-              ;; If we're here, we know the above funcall exited without error,
-              ;; so we can safely pop that step off the queue.
-              (pop state)
               ;; Schedule the next step.  Note to reader: draw a flowchart...
               (when state
                 (let ((idled-time (or (current-idle-time) 0)))
@@ -156,9 +171,10 @@ call."
                   (setf last-idle-value idled-time))))
           ((error quit)
            (chain-echo "Chain interrupted because: %s" err)
-           (setf running nil)
+           (push func state) ;; recover so we don't skip a function just bc it failed
            (when (eq (car err) 'error)
-             (error "Function %s failed: %s" fun (cdr err))))))
+             (setf running nil)
+             (error "Function %s failed: %s" func (cdr err))))))
       ;; The chain finished.  By setting running to nil we'll know it wasn't just
       ;; a random keyboard-quit.
       (unless state
@@ -170,13 +186,15 @@ call."
   "Run the chain of functions identified by NAME.
 It must have been previously defined with `chain-define'.
 
-The chain is pseudo-asynchronous: it pauses during user input to
-keep Emacs feeling snappy.
+The chain shall run in pseudo-asynchronous fashion, pausing for
+user input to keep Emacs feeling snappy.
 
-If the named chain is already in progress, do nothing and let it
-continue.  Only start a new chain if it is not in progress.
-Therefore, it is safe to call this function many times in a short
-timespace: likely nothing will happen.
+If the named chain is already in progress (i.e. it was launched
+via an earlier invocation of this function), do nothing and let
+it continue.  Only start the chain if it is not already in
+progress.  Therefore, it is safe to call this function many times
+in a short timespace: it will not interrupt work nor cause
+redundant computation.
 
 All the optional keyword arguments accept a function.  These
 functions' return values are ignored except that if any of these
@@ -185,9 +203,9 @@ the chain will be aborted and the function ON-ABORT called.
 
 If the previous chain seems to have been interrupted and left in
 an incomplete state, call ON-INTERRUPT-DISCOVERED, then resume
-execution of the same chain.
+execution of the same chain, picking it up where it was left off.
 
-On starting a new chain, call ON-START before starting.
+On (re-)starting a chain, call ON-START before starting.
 
 For each function in the chain, call PER-STAGE at the beginning."
   (declare (indent defun))
@@ -233,7 +251,7 @@ For each function in the chain, call PER-STAGE at the beginning."
               (chain-echo "Launching new chain.  Unexecuted from last chain: %s" state)
               (named-timer-cancel name)
               (setf state template)
-              (setf last-idle-value 1.0) ;; so `chain--chomp' won't wait. REVIEW
+              (setf last-idle-value 1.0) ;; HACK so `chain--chomp' won't wait
               (chain--chomp name nil per-stage on-abort))
           (named-timer-cancel name)
           (setf running nil)
