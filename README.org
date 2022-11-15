@@ -1,27 +1,27 @@
 #+TITLE: Chain
+#+AUTHOR: Martin Edström
+#+EMAIL: meedstrom@teknik.io
+#+LANGUAGE: en
+# Copying and distribution of this file, with or without modification,
+# are permitted in any medium without royalty provided the copyright
+# notice and this notice are preserved.  This file is offered as-is,
+# without any warranty.
 
-Ok, say you have a big slow function, and you decide to carve it up into
-piecemeal functions each with imperceptible latency.  How will you run those
-functions?  Through a dolist?  No, because dolists can't be paused, so that'd
-be the same as the big slow function.  You need something smart... something
-perhaps utilizing =run-with-idle-timer=...
+You have a big slow piece of Emacs Lisp, and it blocks Emacs for a painful few seconds.  You rack your brain: how to fix it?  You've already tuned the performance to your best ability.  You've ruled out options like shelling out or using async.el, because your code needs to manipulate the current Emacs state.  So you go look up [[https://github.com/kiwanami/emacs-deferred/][deferred.el]] (inspired by jsdeferred) or emacs-aio (inspired by asyncio)...
 
-This library uses builtin timers to help you run a series of functions -- we'll
-call it a chain -- without blocking Emacs.  Same principle as deferred.el, but
-simpler if you haven't learned jsdeferred or its other inspiration sources.
+But wait!  These concepts can be way too sophisticated for your use-case, as they were for mine, and it takes time to learn to do things their ways.  I suspect my use-case is common:
+
+- Use case ::
+  Say you carve up your big slow function into piecemeal functions each with imperceptible latency.  How will you run those functions?  Through a dolist?  No, because dolists can't be paused midway through, so that'd be the same as the big slow function.  You need something smart... something perhaps utilizing =run-with-idle-timer=...
+
+Enter this library.  It uses builtin timers to help you run a series of functions without blocking Emacs.  I find it simple, but that may be cause I wrote it.  I hope you find it simple too.
 
 Features:
 
-- it weeds out many edge cases for you -- rolling your own timer-based
-  non-blocking mechanism is surprisingly complicated
+- it weeds out many edge cases for you -- rolling your own timer-based non-blocking mechanism is surprisingly complicated
 
-- it gets out of the way when the user is operating Emacs & should be
-  unnoticable
+- it gets out of the way when the user is operating Emacs & should be unnoticeable
 
-- it begins executing instantly, not, say, after a second of idle time,
-  because a second can be all the time you get in the first place, e.g. the
-  time between when user switches to minibuffer and when user begins to type.
+- it begins executing instantly, not, say, after a second of idle time, because a second can be all the time you get in the first place, e.g. the time between when user switches to minibuffer and when user begins to type.
 
-The end user API consists mainly of =chain-define= and =chain-run=.
-Sometimes, user may also find reason to call =chain-state= and =chain-echo=.
-For example usage, see my other package that depends on it, [[https://github.com/meedstrom/deianira][Deianira]].
+The API consists mainly of =chain-define= and =chain-run=.  Consult their docstrings.  Sometimes, user may also find reason to call =chain-state= and, for debugging, =chain-echo=.  For an example usage, read the code of my package [[https://github.com/meedstrom/deianira][Deianira]], which depends on this.
