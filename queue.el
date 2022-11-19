@@ -30,12 +30,12 @@
 
 (require 'cl-lib)
 (require 'eieio)
-(require 'named-timer) ;; prevent bugs every day
+(require 'named-timer) ;; prevents bugs every day
 
 (defvar queue-debug t
   "Whether to make available a buffer of debug messages.")
 
-(defun queue--debug-buffer ()
+(defun queue-debug-buffer ()
   "Buffer to write debug messages to."
   (let ((bufname (concat (unless queue-debug " ") "*Queue.el debug*")))
     (or (get-buffer bufname)
@@ -44,10 +44,11 @@
           (setq-local buffer-read-only nil)
           (current-buffer)))))
 
-(defun queue-echo (&rest args)
-  "Write a message to the debug buffer.
+;; FIXME: finish implmenting the id buffer
+(defun queue-echo (id &rest args)
+  "Log a message to the debug buffer associated with ID.
 Arguments ARGS same as for `format'."
-  (with-current-buffer (queue--debug-buffer)
+  (with-current-buffer (queue-debug-buffer)
     (goto-char (point-min))
     (insert (apply #'format
                    (cons (concat (format-time-string "%T: ")
@@ -58,13 +59,14 @@ Arguments ARGS same as for `format'."
     (apply #'format args)))
 
 (defclass queue ()
-  ((active          :initarg :active          :initform nil)
+  ((funs            :initarg :funs)
    (remainder       :initarg :remainder       :initform nil)
    (last-idle-value :initarg :last-idle-value :initform 0)
-   (funs            :initarg :funs)))
+   (on-abort        :initarg :on-abort        :initform nil)
+   (per-stage       :initarg :per-stage       :initform nil)))
 
-(defvar queue--list nil
-  "Alist of all unique queue objects.")
+(defvar queue-objects nil
+  "Alist identifying unique queue objects.")
 
 (defmacro queue-remainder (id)
   "Get the variable \"remainder\" from queue identified by ID.
@@ -80,90 +82,97 @@ invocation to be run on the next \"tick\" like this:
 which can be useful for looping through a list by consuming it
 one item at a time: have a function push itself back onto the
 queue until the list is empty."
-  `(slot-value (alist-get id queue--list) :remainder))
+  `(slot-value (alist-get id queue-objects) :remainder))
 
-(cl-defun queue--chomp
-    (id &optional polite per-stage on-abort
-        &aux (queue (alist-get id queue--list)))
+(cl-defun queue-chomp
+    (id &optional polite per-stage
+        &aux (queue (alist-get id queue-objects)))
   "Call the next function in the queue identified by ID.
-Also pass ID on unmodified as an argument to this function so it
-can manipulate the running queue if needed, primarily via
-`queue-remainder'.  ID also identifies the associated timer via
-`named-timer-get'.
+Also pass ID onwards as an argument to this function to allow it
+to manipulate the running queue, via `queue-remainder'.
 
-Finally, schedule another invocation of `queue--chomp'.  Optional
+Finally, schedule another invocation of `queue-chomp'.  Optional
 argument POLITE ensures waiting for at least 1 second of idle
 time before invoking.
 
-PER-STAGE and ON-ABORT same as in `queue-run'."
-  (with-slots (:active :remainder :last-idle-value) queue
-    (if (and per-stage
-             (eq 'please-abort (funcall per-stage)))
-        ;; Abort whole queue
-        (progn
-          (setf :active nil)
-          (setf :remainder nil)
-          (funcall on-abort))
+PER-STAGE same as in `queue-run'.
+
+Note that `queue-chomp' must be called indirectly via
+`named-timer-run'; to call it any other way will hopefully
+trigger an error.  This mandate helps preserve the expected
+behavior from the chain of timers, since `named-timer-run'
+cancels any call that may have been pending, avoiding
+double-calls."
+  (with-slots (:remainder :last-idle-value :per-stage) queue
+    (if (and :per-stage
+             (eq 'please-abort (funcall :per-stage)))
+        (queue-takedown id)
+      ;; No abort requested, proceed
       (let ((func (pop :remainder)))
         (condition-case err
             (progn
-              ;; In case something called this function twice and it wasn't the
-              ;; timer that did it (if the timer ran the function, it won't be
-              ;; among the active timers while this body is executing, so the
-              ;; error isn't tripped).
+              ;; Ensure that the associated timer is inactive while this executes,
+              ;; because if active, that indicates something else called this,
+              ;; and we consider that usage pattern an error.
               (when (member (named-timer-get id) timer-list)
-                (error (queue-echo "Timer was not cancelled before `queue--chomp'")))
-              (setf :active t)
-              (queue-echo "Running: %s" func)
-              (funcall func id) ;; Real work happens here
-              ;; Schedule the next step.  Note to reader: draw a flowchart...
-              (when :remainder
-                (let ((idled-time (or (current-idle-time) 0)))
-                  (if (or (and polite
-                               (time-less-p 1.0 idled-time))
-                          (and (not polite)
-                               (time-less-p idled-time 1.0)
-                               (time-less-p :last-idle-value idled-time)))
-                      ;; If user hasn't done any I/O since last chomp, go go go.
-                      ;; If being impolite, go even within 1.0 second timeframe
-                      ;; until there is user input, in which case give up and be
-                      ;; polite.
-                      (named-timer-run id 0 nil #'queue--chomp id nil per-stage on-abort)
-                    ;; Otherwise give Emacs a momen
-                    ;; t to respond to user input,
-                    ;; and stay polite as long as input keeps happening.
-                    (named-timer-idle-run id 1.0 nil #'queue--chomp id 'politely per-stage on-abort))
-                  (setf :last-idle-value idled-time))))
+                (error (queue-echo
+                        (concat "Timer was not cancelled, possibly `queue-chomp'"
+                                " was not called by `named-timer-run'."))))
+              ;; TODO: Warn if time exceeds 2s. And implement dead man's switch of 2s.
+              (let ((then (time-to-seconds))
+                    ;; Real work happens here
+                    (result (funcall func id)))
+                (queue-echo "Ran in %ss: %s" (- (time-to-seconds) then) func))
+              (if (eq result 'please-abort)
+                  (queue-takedown id)
+                ;; Schedule the next step.
+                (when :remainder
+                  (let ((idled-time (or (current-idle-time) 0)))
+                    (if (or (time-less-p 1.0 idled-time)
+                            (and (not polite)
+                                 (time-less-p :last-idle-value idled-time)))
+                        ;; If user hasn't done any I/O since last chomp, go go go.
+                        ;; If being impolite, go even within 1.0 second timeframe
+                        ;; until there is user input, in which case give up and be
+                        ;; polite.
+                        (named-timer-run id 0 nil #'queue-chomp id nil)
+                      ;; Otherwise give Emacs a moment to respond to user input,
+                      ;; and stay polite as long as input keeps happening.
+                      (named-timer-idle-run id 1.0 nil #'queue-chomp id 'politely))
+                    (setf :last-idle-value idled-time)))))
           ((error quit)
            (queue-echo "Queue interrupted because: %s" err)
-           (push func :remainder) ;; recover so we don't skip a function just bc it failed
+           (push func :remainder) ;; recover state so we don't skip a function just b/c it failed
            (when (eq (car err) 'error)
-             (setf :active nil)
-             (error "Function %s failed: %s" func (cdr err))))))
-      ;; The queue finished.  By nulling :active we'll know it wasn't just
-      ;; a random keyboard-quit.
-      ;; REVIEW: Actually the fact :remainder is empty should be sufficient.
-      (unless :remainder
-        (setf :active nil)))))
+             (error "Function %s failed: %s" func (cdr err)))))))))
 
-;; TODO: Maybe use a function `queue-stop' instead of a return symbol
-;; 'please-abort.  This would work inside the queue proper as well.
+;; REVIEW: maybe name it takedown or cancel
+;; REVIEW: do we need to keep using a return value from PER-STAGE &
+;; ON-INTERRUPT-DISCOVERED?  or can we make a somehow totally differnt workflow
+;; where these don't need to return any signal but directly call the abort and
+;; then somehow kill the parent caller? that's obviously a no but idk
+(defun queue-takedown (id)
+  (named-timer-cancel id)
+  (let ((queue (alist-get id queue-objects)))
+    (setf (slot-value queue :remainder) nil)
+    (funcall (slot-value queue :on-abort))))
+
 ;;;###autoload
 (cl-defun queue-run
     (funs &key on-interrupt-discovered on-start per-stage on-abort
-          &aux (id (make-symbol (concat "queue-" (number-to-string (abs (sxhash funs))))))
-               (queue (alist-get id queue--list)))
+          &aux (id (make-symbol
+                    (concat "queue-" (number-to-string
+                                      (abs (sxhash (append funs per-stage on-abort)))))))
+               (queue (alist-get id queue-objects)))
   "Attempt to run the series of functions in list FUNS.
 
 Run them as a pseudo-asynchronous queue that pauses for user
 input to keep Emacs feeling snappy.
 
 The queue as a whole is assigned an identifier based on
-uniqueness of FUNS, so calling this several times with the same
-FUNS may not re-start the queue, but no-op in favour of letting
-the already running queue finish.  Beware that calling this with
-a slightly different FUNS results in running an entirely separate
-\"thread\".
+uniqueness of input, so calling this several times with identical
+input may not re-start the queue, but no-op in favour of letting
+the already running queue finish.
 
 Each function is passed one argument, the identifier, see
 `queue-remainder' for info on how that can be used.  The return
@@ -178,57 +187,40 @@ If the previous queue seems to have been interrupted and left in
 an incomplete state, call ON-INTERRUPT-DISCOVERED, then resume
 executing the queue, picking it up where it was left off.
 
-On (re-)starting a queue, call ON-START before starting.
-
 For each function in the queue, call PER-STAGE just before."
   (declare (indent defun))
   (unless queue
-    (setq queue (queue :funs funs))
-    (push (cons id queue) queue--list))
-  (with-slots (:active :remainder :last-idle-value :funs) queue
-    ;; TODO: rewrite with cond to make it easier to read
-    (if :active
-        ;; Q: can we end up in a state where timer is inactive? A: yes, it's the
-        ;; normal case for queue--chomp because it's often called by a timer, which
-        ;; takes itself off the timer-list prior to calling.  However, we don't
-        ;; ever call queue-run with (the package-internal) timer, so
-        ;; (named-timer-get name) being in timer-list basically means a state is
-        ;; active, though the opposite doesn't always mean it's not.
-        (progn
-          (when (not (member (named-timer-get id) timer-list))
-            (error (queue-echo "No timer, but `:active' still t")))
-          (if :remainder
-              (queue-echo "Already active queue, letting it continue")
-            ;; TODO: is it just during debugging we end up in this state? No.
-            (error (queue-echo "Queue empty but `:active' still t"))))
-      (if (and (not :active)
-               :remainder
+    (setq queue (queue :funs funs :on-abort on-abort :per-stage per-stage))
+    (setf (alist-get id queue-objects) queue))
+  (with-slots (:remainder :last-idle-value :funs) queue
+    ;; TODO: implement again the bool :active -- with more clarity this time.
+    ;; the (member timer-list) is unreliable, may as well not use.  Maybe the
+    ;; bool should be called something else...  :has-a-timer or :is-scheduled...
+    ;; it's sounding more like it should be a function.  But there's nothing I
+    ;; know of that could be checked in realtime.  Ok no, the rock-solid check
+    ;; is a dead-man's switch: just before each chomp, set :active true and
+    ;; start a once-off timer of 2 seconds that will set :active to false.  That
+    ;; way it's kept true the whole time that we're actually chomping, so if
+    ;; it's become false we know it was interrupted somehow.
+    (if (member (named-timer-get id) timer-list)
+        (queue-echo "Already running queue, letting it continue: %s" id)
+      (if (and :remainder
                (not (equal :remainder :funs)))
           ;; Something must have interrupted execution.  Resume.
           (if (or (not on-interrupt-discovered)
                   (and on-interrupt-discovered
                        (not (eq 'please-abort (funcall on-interrupt-discovered)))))
-              ;; The on-interrupt-discovered function returned OK, or we didn't have such a function to run
+              ;; The on-interrupt-discovered didn't ask us to abort, or we had no such function
               (progn
-                (queue-echo "Queue had been interrupted, resuming")
-                (named-timer-run id 0 nil #'queue--chomp id nil per-stage on-abort)))
-            (named-timer-cancel id)
-            (setf :active nil)
-            (setf :remainder nil)
-            (funcall on-abort))
-        (if (or (not on-start)
-                (and on-start
-                     (not (eq 'please-abort (funcall on-start)))))
-            ;; The on-start function didn't ask us to abort, or we didn't have an on-start function to run
-            (progn
-              (queue-echo "Launching new queue.  Unexecuted from last queue: %s" :remainder)
-              (named-timer-cancel id)
-              (setf :remainder :funs)
-              (setf :last-idle-value 1.0) ;; HACK so `queue--chomp' won't wait
-              (named-timer-run id 0 nil #'queue--chomp id nil per-stage on-abort))
-          (named-timer-cancel id)
-          (setf :active nil)
-          (setf :remainder nil)
-          (funcall on-abort)))))
+                (queue-echo "Queue had been interrupted, resuming: %s" id)
+                (setf :last-idle-value 0)
+                (named-timer-run id 0 nil #'queue-chomp id nil))
+            ;; Abort
+            (queue-takedown id))
+        ;; Start executing the full queue
+        (queue-echo "Starting %s.  Left unexecuted last time: %s" id :remainder)
+        (setf :remainder :funs)
+        (setf :last-idle-value 0)
+        (named-timer-run id 0 nil #'queue-chomp id nil)))))
 
 (provide 'queue)
