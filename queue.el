@@ -1,4 +1,4 @@
-;;; queue.el --- non-blocking series of functions -*- lexical-binding: t -*-
+;;; asyncloop.el --- non-blocking series of functions -*- lexical-binding: t -*-
 
 ;; Copyright (C) 2022 Martin Edström
 
@@ -21,7 +21,7 @@
 ;; Created: 2022-10-30
 ;; Version: 0.1.0
 ;; Keywords: tools
-;; Homepage: https://github.com/meedstrom/queue
+;; Homepage: https://github.com/meedstrom/asyncloop
 ;; Package-Requires: ((emacs "28.1") (named-timer "0.1"))
 
 ;;; Commentary:
@@ -32,81 +32,82 @@
 (require 'eieio)
 (require 'named-timer) ;; prevents bugs every day
 
-(defvar queue-debug t
-  "Whether to make available a buffer of debug messages.")
+(defvar asyncloop-debug t
+  "Whether to reveal buffers of debug messages.")
 
-(defun queue-debug-buffer ()
+(defun asyncloop-debug-buffer (id)
   "Buffer to write debug messages to."
-  (let ((bufname (concat (unless queue-debug " ") "*Queue.el debug*")))
+  (let ((bufname (concat (unless asyncloop-debug " ") "*" id "*")))
     (or (get-buffer bufname)
         (with-current-buffer (get-buffer-create bufname)
           (setq-local truncate-lines t)
           (setq-local buffer-read-only nil)
           (current-buffer)))))
 
-;; FIXME: finish implmenting the id buffer
-(defun queue-echo (id &rest args)
+(defun asyncloop-echo (id &rest args)
   "Log a message to the debug buffer associated with ID.
 Arguments ARGS same as for `format'."
-  (with-current-buffer (queue-debug-buffer)
+  (declare (indent defun))
+  (with-current-buffer (asyncloop-debug-buffer id)
     (goto-char (point-min))
     (insert (apply #'format
                    (cons (concat (format-time-string "%T: ")
                                  (car args))
                          (cdr args))))
     (newline)
-    ;; pass also to caller, enabling e.g. (warn (queue-echo "..."))
+    ;; pass also to caller, so user can both log it to debug and signal an error
+    ;; via (error (asyncloop-echo id "..."))
     (apply #'format args)))
 
-(defclass queue ()
+(defclass asyncloop ()
   ((funs            :initarg :funs)
    (remainder       :initarg :remainder       :initform nil)
    (last-idle-value :initarg :last-idle-value :initform 0)
    (on-abort        :initarg :on-abort        :initform nil)
    (per-stage       :initarg :per-stage       :initform nil)))
 
-(defvar queue-objects nil
-  "Alist identifying unique queue objects.")
+(defvar asyncloop-objects nil
+  "Alist identifying unique asyncloop objects.")
 
-(defmacro queue-remainder (id)
-  "Get the variable \"remainder\" from queue identified by ID.
-The expression (queue-remainder ID) returns the list of functions
-that remain to be executed for that queue.
+(defmacro asyncloop-remainder (id)
+  "Get the variable \"remainder\" from asyncloop identified by ID.
+The expression (asyncloop-remainder ID) returns the list of functions
+that remain to be executed for that asyncloop.
 
 If, as most likely, we're called from within a function that's
-called by a running queue, you can schedule a new function
+called by a running asyncloop, you can schedule a new function
 invocation to be run on the next \"tick\" like this:
 
-(push #'some-additional-function (queue-remainder ID))
+(push #'some-additional-function (asyncloop-remainder ID))
 
 which can be useful for looping through a list by consuming it
 one item at a time: have a function push itself back onto the
-queue until the list is empty."
-  `(slot-value (alist-get id queue-objects) :remainder))
+execution queue until the list is empty."
+  `(slot-value (alist-get id asyncloop-objects) :remainder))
 
-(cl-defun queue-chomp
-    (id &optional polite per-stage
-        &aux (queue (alist-get id queue-objects)))
-  "Call the next function in the queue identified by ID.
+(cl-defun asyncloop-chomp (id &optional polite per-stage)
+  "Call the next function in the asyncloop identified by ID.
 Also pass ID onwards as an argument to this function to allow it
-to manipulate the running queue, via `queue-remainder'.
+to manipulate the running asyncloop, via `asyncloop-remainder'.
 
-Finally, schedule another invocation of `queue-chomp'.  Optional
+Finally, schedule another invocation of `asyncloop-chomp'.  Optional
 argument POLITE ensures waiting for at least 1 second of idle
 time before invoking.
 
-PER-STAGE same as in `queue-run'.
+PER-STAGE same as in `asyncloop-run'.
 
-Note that `queue-chomp' must be called indirectly via
+Note that `asyncloop-chomp' must be called indirectly via
 `named-timer-run'; to call it any other way will hopefully
 trigger an error.  This mandate helps preserve the expected
 behavior from the chain of timers, since `named-timer-run'
 cancels any call that may have been pending, avoiding
 double-calls."
-  (with-slots (:remainder :last-idle-value :per-stage) queue
+  (with-slots (:remainder :last-idle-value :per-stage)
+              (alist-get id asyncloop-objects)
+    ;; TODO: instead of the special symbol 'per-stage, just check :remainder again, because if it's nulled then user must have called asyncloop-defuse.
     (if (and :per-stage
-             (eq 'please-abort (funcall :per-stage)))
-        (queue-takedown id)
+             (eq 'please-abort (funcall :per-stage id)))
+        (asyncloop-defuse id)
       ;; No abort requested, proceed
       (let ((func (pop :remainder)))
         (condition-case err
@@ -115,84 +116,93 @@ double-calls."
               ;; because if active, that indicates something else called this,
               ;; and we consider that usage pattern an error.
               (when (member (named-timer-get id) timer-list)
-                (error (queue-echo
-                        (concat "Timer was not cancelled, possibly `queue-chomp'"
+                (error (asyncloop-echo id
+                        (concat "Timer was not cancelled, possibly `asyncloop-chomp'"
                                 " was not called by `named-timer-run'."))))
               ;; TODO: Warn if time exceeds 2s. And implement dead man's switch of 2s.
               (let ((then (time-to-seconds))
                     ;; Real work happens here
                     (result (funcall func id)))
-                (queue-echo "Ran in %ss: %s" (- (time-to-seconds) then) func))
-              (if (eq result 'please-abort)
-                  (queue-takedown id)
-                ;; Schedule the next step.
-                (when :remainder
-                  (let ((idled-time (or (current-idle-time) 0)))
-                    (if (or (time-less-p 1.0 idled-time)
-                            (and (not polite)
-                                 (time-less-p :last-idle-value idled-time)))
-                        ;; If user hasn't done any I/O since last chomp, go go go.
-                        ;; If being impolite, go even within 1.0 second timeframe
-                        ;; until there is user input, in which case give up and be
-                        ;; polite.
-                        (named-timer-run id 0 nil #'queue-chomp id nil)
-                      ;; Otherwise give Emacs a moment to respond to user input,
-                      ;; and stay polite as long as input keeps happening.
-                      (named-timer-idle-run id 1.0 nil #'queue-chomp id 'politely))
-                    (setf :last-idle-value idled-time)))))
+                (asyncloop-echo id "Ran in %ss: %s" (- (time-to-seconds) then) func)
+                ;; NOTE: Technically, you can just tell user to call
+                ;; asyncloop-defuse and then since :remainder will be nil, it's
+                ;; the same as checking the return value.  It's redundant to
+                ;; check the return value here.  But for uniformity of UX I
+                ;; believe we'd best keep the user's ability to return that
+                ;; symbol instead of calling asyncloop-defuse, because the
+                ;; optional functions in asyncloop-run cannot do it that way(?).
+                (if (eq result 'please-abort)
+                    (asyncloop-defuse id)
+                  ;; Schedule the next step.
+                  (when :remainder
+                    (let ((idled-time (or (current-idle-time) 0)))
+                      (if (or (time-less-p 1.0 idled-time)
+                              (and (not polite)
+                                   (time-less-p :last-idle-value idled-time)))
+                          ;; If user hasn't done any I/O since last chomp, go go go.
+                          ;; If being impolite, go even within 1.0 second timeframe
+                          ;; until there is user input, in which case give up and be
+                          ;; polite.
+                          (named-timer-run id 0 nil #'asyncloop-chomp id nil)
+                        ;; Otherwise give Emacs a moment to respond to user input,
+                        ;; and stay polite as long as input keeps happening.
+                        (named-timer-idle-run id 1.0 nil #'asyncloop-chomp id 'politely))
+                      (setf :last-idle-value idled-time))))))
           ((error quit)
-           (queue-echo "Queue interrupted because: %s" err)
-           (push func :remainder) ;; recover state so we don't skip a function just b/c it failed
+           (asyncloop-echo id "Asyncloop interrupted because: %s" err)
+           ;; Restore state so we don't skip a function just b/c it failed
+           (push func :remainder)
            (when (eq (car err) 'error)
              (error "Function %s failed: %s" func (cdr err)))))))))
 
-;; REVIEW: maybe name it takedown or cancel
-;; REVIEW: do we need to keep using a return value from PER-STAGE &
-;; ON-INTERRUPT-DISCOVERED?  or can we make a somehow totally differnt workflow
-;; where these don't need to return any signal but directly call the abort and
-;; then somehow kill the parent caller? that's obviously a no but idk
-(defun queue-takedown (id)
-  (named-timer-cancel id)
-  (let ((queue (alist-get id queue-objects)))
-    (setf (slot-value queue :remainder) nil)
-    (funcall (slot-value queue :on-abort))))
+(defun asyncloop-defuse (id)
+  (let ((asyncloop (alist-get id asyncloop-objects)))
+    (named-timer-cancel id)
+    (setf (slot-value asyncloop :remainder) nil)
+    (funcall (slot-value asyncloop :on-abort) id)))
 
 ;;;###autoload
-(cl-defun queue-run
-    (funs &key on-interrupt-discovered on-start per-stage on-abort
+(cl-defun asyncloop-run
+    (funs &key on-interrupt-discovered per-stage on-abort
           &aux (id (make-symbol
-                    (concat "queue-" (number-to-string
-                                      (abs (sxhash (append funs per-stage on-abort)))))))
-               (queue (alist-get id queue-objects)))
+                    (concat "asyncloop-"
+                            (number-to-string
+                             (abs (sxhash (append per-stage on-abort funs))))))))
   "Attempt to run the series of functions in list FUNS.
 
-Run them as a pseudo-asynchronous queue that pauses for user
-input to keep Emacs feeling snappy.
+Run them as a pseudo-asynchronous loop that pauses for user
+activity to keep Emacs feeling snappy.
 
-The queue as a whole is assigned an identifier based on
-uniqueness of input, so calling this several times with identical
-input may not re-start the queue, but no-op in favour of letting
-the already running queue finish.
+The loop as a whole is assigned an identifier based on uniqueness
+of input, and refuses to run multiple instances with the same
+identifier.  That means that if, perhaps accidentally, you call
+this several times with identical input in a very short
+timeframe, only the first invocation does anything, and the rest
+may no-op in favour of letting the already running asyncloop
+finish.
 
-Each function is passed one argument, the identifier, see
-`queue-remainder' for info on how that can be used.  The return
-values are ignored.
+If the previous asyncloop seems to have been interrupted and left
+in an incomplete state, call the optional function
+ON-INTERRUPT-DISCOVERED, then resume the loop,
+picking it up where it was left off.
 
-All the optional keyword arguments accept one function each.
-These functions' return values are ignored except that if they
-return the symbol 'please-abort, the queue will be aborted and
-the function ON-ABORT called.
+For each function in the asyncloop, call the optional function
+PER-STAGE just before.
 
-If the previous queue seems to have been interrupted and left in
-an incomplete state, call ON-INTERRUPT-DISCOVERED, then resume
-executing the queue, picking it up where it was left off.
+All the functions inside FUNS and those provided in the optional
+arguments share the following traits:
 
-For each function in the queue, call PER-STAGE just before."
+- they are passed one argument: the identifier for the loop.  See
+`asyncloop-remainder' for how that can be used.
+
+- they can cause special behavior by returning the symbol
+'please-abort, whereupon the asyncloop will be aborted and the
+optional function ON-ABORT called."
   (declare (indent defun))
-  (unless queue
-    (setq queue (queue :funs funs :on-abort on-abort :per-stage per-stage))
-    (setf (alist-get id queue-objects) queue))
-  (with-slots (:remainder :last-idle-value :funs) queue
+  (with-slots (:remainder :last-idle-value :funs)
+      (or (alist-get id asyncloop-objects)
+          (setf (alist-get id asyncloop-objects)
+                (asyncloop :funs funs :on-abort on-abort :per-stage per-stage)))
     ;; TODO: implement again the bool :active -- with more clarity this time.
     ;; the (member timer-list) is unreliable, may as well not use.  Maybe the
     ;; bool should be called something else...  :has-a-timer or :is-scheduled...
@@ -203,24 +213,26 @@ For each function in the queue, call PER-STAGE just before."
     ;; way it's kept true the whole time that we're actually chomping, so if
     ;; it's become false we know it was interrupted somehow.
     (if (member (named-timer-get id) timer-list)
-        (queue-echo "Already running queue, letting it continue: %s" id)
+        (asyncloop-echo id "Already running loop, letting it continue: %s" id)
       (if (and :remainder
                (not (equal :remainder :funs)))
           ;; Something must have interrupted execution.  Resume.
           (if (or (not on-interrupt-discovered)
                   (and on-interrupt-discovered
-                       (not (eq 'please-abort (funcall on-interrupt-discovered)))))
+                       (not (eq 'please-abort (funcall on-interrupt-discovered id)))))
               ;; The on-interrupt-discovered didn't ask us to abort, or we had no such function
               (progn
-                (queue-echo "Queue had been interrupted, resuming: %s" id)
-                (setf :last-idle-value 0)
-                (named-timer-run id 0 nil #'queue-chomp id nil))
+                ;; In case asyncloop-defuse was called, which would null :remainder
+                (when :remainder
+                  (asyncloop-echo id "Async loop had been interrupted, resuming: %s" id)
+                  (setf :last-idle-value 0)
+                  (named-timer-run id 0 nil #'asyncloop-chomp id nil)))
             ;; Abort
-            (queue-takedown id))
-        ;; Start executing the full queue
-        (queue-echo "Starting %s.  Left unexecuted last time: %s" id :remainder)
+            (asyncloop-defuse id))
+        ;; Start executing the full asyncloop
+        (asyncloop-echo id "Starting %s.  Left unexecuted last time: %s" id :remainder)
         (setf :remainder :funs)
         (setf :last-idle-value 0)
-        (named-timer-run id 0 nil #'queue-chomp id nil)))))
+        (named-timer-run id 0 nil #'asyncloop-chomp id nil)))))
 
-(provide 'queue)
+(provide 'asyncloop)
