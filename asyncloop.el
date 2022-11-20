@@ -37,7 +37,7 @@
 
 (defun asyncloop-debug-buffer (id)
   "Buffer to write debug messages to."
-  (let ((bufname (concat (unless asyncloop-debug " ") "*" id "*")))
+  (let ((bufname (concat (unless asyncloop-debug " ") "*" (symbol-name id) "*")))
     (or (get-buffer bufname)
         (with-current-buffer (get-buffer-create bufname)
           (setq-local truncate-lines t)
@@ -122,7 +122,7 @@ double-calls."
                     ;; Real work happens here
                     (result (funcall func id)))
                 (asyncloop-echo id
-                  "Ran in %ss: %s" (- (time-to-seconds) then) func)
+                  "Finished in %.5ss: %s" (- (time-to-seconds) then) func)
                 ;; Schedule the next step.
                 ;; The :remainder may be empty for two reasons, either there was
                 ;; no more to run, or the last function called asyncloop-defuse.
@@ -155,11 +155,11 @@ double-calls."
 
 ;;;###autoload
 (cl-defun asyncloop-run
-    (funs &key on-interrupt-discovered per-stage on-abort
+    (funs &key on-interrupt-discovered per-stage on-abort on-start
           (id (make-symbol
                (concat "asyncloop-"
                        (number-to-string
-                        (abs (sxhash (append per-stage on-abort funs))))))))
+                        (abs (sxhash (append (list per-stage on-abort) funs))))))))
   "Attempt to run the series of functions in list FUNS.
 
 Run them as a pseudo-asynchronous loop that pauses for user
@@ -171,7 +171,7 @@ identifier.  That means that if, perhaps accidentally, you call
 this several times with identical input in a very short
 timeframe, only the first invocation does anything, and the rest
 may no-op in favour of letting the already running asyncloop
-finish.  You may also explicitly specify ID; make it a symbol.
+finish.  You may also specify a custom identifier ID, a symbol.
 
 If the previous asyncloop seems to have been interrupted and left
 in an incomplete state, call the optional function
@@ -180,6 +180,10 @@ it was left off.
 
 For each function in the asyncloop, call the optional function
 PER-STAGE just before.
+
+At the very start of a fresh loop, also call the optional function
+ON-START.  This can be useful for preparing variables such that
+PER-STAGE will work as you intend.
 
 All the functions inside FUNS and those provided in the optional
 arguments are passed one argument: the identifier for the loop.
@@ -216,6 +220,8 @@ be used."
           "Starting %s.  Left unexecuted last time: %s" id :remainder)
         (setf :remainder :funs)
         (setf :last-idle-value 0)
-        (named-timer-run id 0 nil #'asyncloop-chomp id nil)))))
+        (and on-start (funcall on-start id))
+        (when :remainder
+          (named-timer-run id 0 nil #'asyncloop-chomp id nil))))))
 
 (provide 'asyncloop)
