@@ -1,4 +1,4 @@
-#+TITLE: Chain
+#+TITLE: Asyncloop
 #+AUTHOR: Martin Edström
 #+EMAIL: meedstrom@teknik.io
 #+LANGUAGE: en
@@ -7,21 +7,37 @@
 # notice and this notice are preserved.  This file is offered as-is,
 # without any warranty.
 
-You have a big slow piece of Emacs Lisp, and it blocks Emacs for a painful few seconds.  You rack your brain: how to fix it?  You've already tuned the performance to your best ability.  You've ruled out options like shelling out or using async.el, because your code needs to manipulate the current Emacs state.  So you go look up [[https://github.com/kiwanami/emacs-deferred/][deferred.el]] (inspired by jsdeferred) or emacs-aio (inspired by asyncio)...
+You have a big slow piece of Emacs Lisp, and it blocks Emacs for a painful few seconds.  You rack your brain: how to fix it?  You've already tuned the performance to your best ability.  You've ruled out async.el or shelling out, because your code needs to manipulate the current Emacs state.  So you go look up the libraries [[https://github.com/kiwanami/emacs-deferred/][deferred.el]] (inspired by jsdeferred) or emacs-aio (inspired by asyncio)...
 
-But wait!  These concepts can be way too sophisticated for your use-case, as they were for mine, and it takes time to learn to do things their ways.  I suspect my use-case is common:
+But wait!  These concepts can be way too sophisticated for your use-case, as they were for mine, and they take time to understand well enough to debug code that uses them.  I suspect my simple use-case is common:
 
-- Use case ::
-  Say you carve up your big slow function into piecemeal functions each with imperceptible latency.  How will you run those functions?  Through a dolist?  No, because dolists can't be paused midway through, so that'd be the same as the big slow function.  You need something smart... something perhaps utilizing =run-with-idle-timer=...
+- *Use case* ::
+  Say you've carved up your big slow function into piecemeal functions each with imperceptible latency.  How will you call those functions?  Through a =dolist=?  No, dolists can't be paused midway through, so that'd be the same as the big slow function.  You need some kind of smarter dolist... perhaps utilizing =run-with-idle-timer=...
 
-Enter this library.  It uses builtin timers to help you run a series of functions without blocking Emacs.  I find it simple, but that may be cause I wrote it.  I hope you find it simple too.
+  Enter this library.  It helps you run a series of functions without hanging Emacs, implemented on a chain of timers.
 
-Features:
+*Features*
 
-- it weeds out many edge cases for you -- rolling your own timer-based non-blocking mechanism is surprisingly complicated
+- weeds out many edge cases; rolling your own timer-based non-blocking mechanism is [[https://meedstrom.github.io/emacs-timer-gotchas][laden with gotchas]]
 
-- it gets out of the way when the user is operating Emacs & should be unnoticeable
+- gets out of the way when the user is operating Emacs & should avert any noticeable lag
 
-- it begins executing instantly, not, say, after a second of idle time, because a second can be all the time you get in the first place, e.g. the time between when user switches to minibuffer and when user begins to type.
+- begins executing instantly, not, say, after a second of idle time, because a second can be all the time you get in the first place, e.g. the time between when user switches to minibuffer and when user begins to type
 
-The API consists mainly of =chain-define= and =chain-run=.  Consult their docstrings.  Sometimes, user may also find reason to call =chain-state= and, for debugging, =chain-echo=.  For an example usage, read the code of my package [[https://github.com/meedstrom/deianira][Deianira]], which depends on this.
+- automatic profiling: check debug buffer to see how long each of your functions take
+
+- made with 120 lines of code (and uses the excellent named-timer.el, another 50 lines)
+
+*Usage*
+
+The API consists mainly of =(asyncloop-run)=, consult its docstring.  You may also find reason to call:
+
+- =(asyncloop-remainder ID)=: access state of the running loop, so you can modify it with =setf=, =push=, =delq= etc.
+- =(asyncloop-defuse ID)=: cancel the running loop
+- =(asyncloop-echo ID &rest ARGS)=: send debug messages
+
+For an example usage, ctrl+F "asyncloop" in [[https://github.com/meedstrom/deianira/blob/master/deianira.el][deianira.el]], the package that gave birth to this library.
+
+*Anti-wishlist (won't implement)*
+
+- The argument-passing style enabled in deferred.el among others, where you can use the return value from each function as input for the next function, sounds elegant but I've found it awful for debugging (perhaps I was missing some tooling).  I recommend instead the "crude" approach of keeping state in external variables that you can inspect along the way, making it easy to figure out what work a broken chain did or didn't get done.  This approach also helps clarify the intent of your code because you have to name those variables.
