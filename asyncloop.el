@@ -1,4 +1,4 @@
-;;; asyncloop.el --- non-blocking series of functions -*- lexical-binding: t -*-
+;;; asyncloop.el --- Non-blocking series of functions -*- lexical-binding: t -*-
 
 ;; Copyright (C) 2022 Martin Edström
 
@@ -25,6 +25,10 @@
 ;; Package-Requires: ((emacs "28.1") (named-timer "0.1"))
 
 ;;; Commentary:
+
+;; This package should make it easy to run a series of functions without hanging
+;; Emacs in the meantime.  The API consists mainly of asyncloop-run. You may also
+;; find reason to call asyncloop-remainder, asyncloop-defuse, asyncloop-echo.
 
 ;;; Code:
 
@@ -55,8 +59,8 @@ Arguments ARGS same as for `format'."
                                  (car args))
                          (cdr args))))
     (newline)
-    ;; pass also to caller, so user can both log it to debug and signal an error
-    ;; via (error (asyncloop-echo id "..."))
+    ;; Pass the string back to caller, so it can be used to also signal
+    ;; something as in (error (asyncloop-echo id "..."))
     (apply #'format args)))
 
 (defclass asyncloop ()
@@ -85,16 +89,24 @@ one item at a time: have a function push itself back onto the
 execution queue until the list is empty."
   `(slot-value (alist-get ,id asyncloop-objects) :remainder))
 
+(defun asyncloop-defuse (id)
+  "Stop continuation of asyncloop identified by ID, and ensure
+it'll be restarted fresh on the next `asyncloop-run'.  Finally
+call the associated :on-abort if one was specified."
+  (let ((asyncloop (alist-get id asyncloop-objects)))
+    (named-timer-cancel id)
+    (setf (slot-value asyncloop :remainder) nil)
+    (funcall (slot-value asyncloop :on-abort) id)))
+
 (cl-defun asyncloop-chomp (id &optional polite)
   "Call the next function in the asyncloop identified by ID.
 Also pass ID onwards as an argument to this function to allow it
-to manipulate the running asyncloop, via `asyncloop-remainder'.
+to manipulate the running asyncloop, via `asyncloop-remainder'
+and `asyncloop-defuse'.
 
 Finally, schedule another invocation of `asyncloop-chomp'.  Optional
 argument POLITE ensures waiting for at least 1 second of idle
 time before invoking.
-
-PER-STAGE same as in `asyncloop-run'.
 
 Note that `asyncloop-chomp' must be called indirectly via
 `named-timer-run'; to call it any other way will hopefully
@@ -105,19 +117,17 @@ double-calls."
   (with-slots (:remainder :last-idle-value :per-stage)
               (alist-get id asyncloop-objects)
     (and :per-stage (funcall :per-stage id))
-    ;; If above calls asyncloop-defuse, it nulls :remainder
     (when :remainder
       (let ((func (pop :remainder)))
         (condition-case err
             (progn
-              ;; Ensure that the associated timer is inactive while this executes,
-              ;; because if active, that indicates something else called this,
-              ;; and we consider that usage pattern an error.
+              ;; Ensure that the associated timer is inactive while this
+              ;; executes, because if active, that indicates something else
+              ;; called this, and we consider that usage pattern an error.
               (when (member (named-timer-get id) timer-list)
                 (error (asyncloop-echo id
                         (concat "Timer was not cancelled, possibly `asyncloop-chomp'"
                                 " was not called by `named-timer-run'."))))
-              ;; TODO: Warn if time exceeds 2s. And implement dead man's switch of 2s.
               (let ((then (time-to-seconds))
                     ;; Real work happens here
                     (result (funcall func id)))
@@ -131,11 +141,11 @@ double-calls."
                     (if (or (time-less-p 1.0 idled-time)
                             (and (not polite)
                                  (time-less-p :last-idle-value idled-time)))
-                        ;; If user hasn't done any I/O since last chomp, go go go.
-                        ;; If being impolite, go even within 1.0 second timeframe
-                        ;; until there is user input, in which case give up and be
-                        ;; polite.
-                        (named-timer-run id 0 nil #'asyncloop-chomp id nil)
+                        ;; If user hasn't done any I/O since last chomp, go go
+                        ;; go.  If being impolite, go even within 1.0 second
+                        ;; timeframe until there is user input, in which case
+                        ;; give up and be polite.
+                        (named-timer-run id 0 nil #'asyncloop-chomp id)
                       ;; Otherwise give Emacs a moment to respond to user input,
                       ;; and stay polite as long as input keeps happening.
                       (named-timer-idle-run id 1.0 nil #'asyncloop-chomp id 'politely))
@@ -145,13 +155,8 @@ double-calls."
            ;; Restore state so we don't skip a function just b/c it failed
            (push func :remainder)
            (when (eq (car err) 'error)
+             (setf :remainder nil)
              (error "Function %s failed: %s" func (cdr err)))))))))
-
-(defun asyncloop-defuse (id)
-  (let ((asyncloop (alist-get id asyncloop-objects)))
-    (named-timer-cancel id)
-    (setf (slot-value asyncloop :remainder) nil)
-    (funcall (slot-value asyncloop :on-abort) id)))
 
 ;;;###autoload
 (cl-defun asyncloop-run
@@ -168,15 +173,15 @@ activity to keep Emacs feeling snappy.
 The loop as a whole is assigned an identifier based on uniqueness
 of input, and refuses to run multiple instances with the same
 identifier.  That means that if, perhaps accidentally, you call
-this several times with identical input in a very short
-timeframe, only the first invocation does anything, and the rest
+this several times with identical input in a short timeframe,
+only the first invocation is likely to do anything, and the rest
 may no-op in favour of letting the already running asyncloop
-finish.  You may also specify a custom identifier ID, a symbol.
+finish.  You may optionally specify a custom identifier ID.
 
-If the previous asyncloop seems to have been interrupted and left
-in an incomplete state, call the optional function
-ON-INTERRUPT-DISCOVERED, then resume the loop, picking up where
-it was left off.
+If the previous asyncloop (with the same identifier) seems to
+have been interrupted and left in an incomplete state, call the
+optional function ON-INTERRUPT-DISCOVERED, then resume the loop,
+picking up where it was left off.
 
 For each function in the asyncloop, call the optional function
 PER-STAGE just before.
@@ -194,15 +199,13 @@ be used."
       (or (alist-get id asyncloop-objects)
           (setf (alist-get id asyncloop-objects)
                 (asyncloop :funs funs :on-abort on-abort :per-stage per-stage)))
-    ;; TODO: implement again the bool :active -- with more clarity this time.
-    ;; the (member timer-list) is unreliable, may as well not use.  Maybe the
-    ;; bool should be called something else...  :has-a-timer or :is-scheduled...
-    ;; it's sounding more like it should be a function.  But there's nothing I
-    ;; know of that could be checked in realtime.  Ok no, the rock-solid check
-    ;; is a dead-man's switch: just before each chomp, set :active true and
-    ;; start a once-off timer of 2 seconds that will set :active to false.  That
-    ;; way it's kept true the whole time that we're actually chomping, so if
-    ;; it's become false we know it was interrupted somehow.
+    ;; REVIEW: Since (member ... timer-list) may not be reliable, perhaps
+    ;; implement in its place a dead-man's switch: have a boolean named :active
+    ;; and just before each chomp, set :active true and start a once-off timer
+    ;; of 2 seconds that will set :active to false.  That way it's kept true the
+    ;; whole time that we're actually chomping, so if it's become false, we know
+    ;; it was interrupted somehow. (Ofc if the function actually takes >2s,
+    ;; signal an error instead of proceeding in unspecified state).
     (if (member (named-timer-get id) timer-list)
         (asyncloop-echo id "Already running loop, letting it continue: %s" id)
       (if (and :remainder
@@ -210,11 +213,10 @@ be used."
           ;; Something must have interrupted execution.  Resume.
           (progn
             (and on-interrupt-discovered (funcall on-interrupt-discovered id))
-            ;; In case asyncloop-defuse was called, which would null :remainder
             (when :remainder
               (asyncloop-echo id "Loop had been interrupted, resuming: %s" id)
               (setf :last-idle-value 0)
-              (named-timer-run id 0 nil #'asyncloop-chomp id nil)))
+              (named-timer-run id 0 nil #'asyncloop-chomp id)))
         ;; Start anew the full loop
         (asyncloop-echo id
           "Starting %s.  Left unexecuted last time: %s" id :remainder)
@@ -222,6 +224,8 @@ be used."
         (setf :last-idle-value 0)
         (and on-start (funcall on-start id))
         (when :remainder
-          (named-timer-run id 0 nil #'asyncloop-chomp id nil))))))
+          (named-timer-run id 0 nil #'asyncloop-chomp id))))))
 
 (provide 'asyncloop)
+
+;;; asyncloop.el ends here
