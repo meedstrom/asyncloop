@@ -11,10 +11,11 @@ You have a big slow piece of Emacs Lisp, and it blocks Emacs for a painful few s
 
 But wait!  These concepts can be way too sophisticated for your use-case, as they were for mine, and they take time to understand well enough to debug code that uses them.  I suspect my simple use-case is common:
 
-- *Use case* ::
-  Say you've carved up your big slow function into piecemeal functions each with imperceptible latency.  How will you call those functions?  Through a =dolist=?  No, dolists can't be paused midway through, so that'd be the same as the big slow function.  You need some kind of smarter dolist... perhaps utilizing =run-with-idle-timer=...
+*Use case*
 
-  Enter this library.  It helps you run a series of functions without hanging Emacs, implemented on a chain of timers.
+Say you've carved up your big slow function into piecemeal functions each with imperceptible latency.  How will you call those functions?  Through a =dolist=?  No, dolists can't be paused midway through, so that'd be the same as the big slow function.  You need some kind of smarter dolist... perhaps utilizing =run-with-idle-timer=...
+
+Enter this library.  It helps you run a series of functions without hanging Emacs, implemented on a chain of timers.
 
 *Features*
 
