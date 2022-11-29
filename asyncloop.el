@@ -72,9 +72,7 @@ Arguments ARGS same as for `format'."
    (remainder       :initarg :remainder       :initform nil)
    (last-idle-value :initarg :last-idle-value :initform 0)
    (on-abort        :initarg :on-abort        :initform nil)
-   (per-stage       :initarg :per-stage       :initform nil)
-   (active          :initarg :active          :initform nil)))
-
+   (per-stage       :initarg :per-stage       :initform nil)))
 
 (defvar asyncloop-objects nil
   "Alist identifying unique asyncloop objects.")
@@ -99,17 +97,11 @@ execution queue until the list is empty."
   "Stop continuation of asyncloop identified by ID, and ensure
 it'll be restarted fresh on the next `asyncloop-run'.  Finally
 call the associated :on-abort function if it exists."
-  (with-slots (:remainder :active :on-abort) (alist-get id asyncloop-objects)
+  (with-slots (:remainder :on-abort) (alist-get id asyncloop-objects)
     (setq asyncloop-just-launched (remove id asyncloop-just-launched))
     (named-timer-cancel id)
     (setf :remainder nil)
-    (setf :active nil)
     (and :on-abort (funcall :on-abort id))))
-
-(defun asyncloop-dead-mans-switch (id)
-  (unless (member (named-timer-get id) timer-list)
-    (setq asyncloop-just-launched (remove id asyncloop-just-launched))
-    (setf (slot-value (alist-get id asyncloop-objects) :active) nil)))
 
 (cl-defun asyncloop-chomp (id &optional polite
                      &aux (obj (alist-get id asyncloop-objects)))
@@ -128,7 +120,7 @@ trigger an error.  This mandate helps preserve the expected
 behavior from the chain of timers, since `named-timer-run'
 cancels any call that may have been pending, avoiding
 double-calls."
-  (with-slots (:remainder :last-idle-value :per-stage :active)
+  (with-slots (:remainder :last-idle-value :per-stage)
               (alist-get id asyncloop-objects)
     (setq asyncloop-just-launched (remove id asyncloop-just-launched))
     (and :per-stage (funcall :per-stage id))
@@ -145,9 +137,6 @@ double-calls."
                   (asyncloop-echo id errmsg)
                   (asyncloop-defuse id)
                   (error errmsg)))
-              (setf :active t)
-              (named-timer-run (intern (concat (symbol-name id) "-watch"))
-                2 nil #'asyncloop-dead-mans-switch id)
               (let* ((then (current-time))
                      (elapsed (progn
                                 (funcall func id) ;; Real work happens here
@@ -228,22 +217,13 @@ be used."
   (declare (indent defun))
   (unless (member id asyncloop-just-launched)
     (push id asyncloop-just-launched)
-    (with-slots (:remainder :last-idle-value :funs :active)
+    (with-slots (:remainder :last-idle-value :funs)
         (or (alist-get id asyncloop-objects)
             (setf (alist-get id asyncloop-objects)
                   (asyncloop :funs funs
                              :on-abort on-abort
                              :per-stage per-stage)))
-      ;; REVIEW: Maybe resume using the conditional (member (named-timer-get id)
-      ;; timer-list).  I had erroneously thought it unreliable, so I implemented
-      ;; in its place a dead-man's switch: a boolean named :active.  Just before
-      ;; each chomp, we set :active true and start a once-off timer of 2 seconds
-      ;; that will set :active false.  That way it's kept true the whole time that
-      ;; we're actually working, so if it's become false, we know it was
-      ;; interrupted somehow. (Ofc, if one function actually takes >2s to complete
-      ;; in full, that'll have to signal an error too, but it makes sense since
-      ;; the package is all about preventing noticeable lag.)
-      (if :active
+      (if (member (named-timer-get id) timer-list)
           (asyncloop-echo id "Already running, letting it continue: %S" id)
         (if (and :remainder (not (equal :remainder :funs)))
             ;; Something like a C-g must have interrupted execution.  Resume.
@@ -252,14 +232,12 @@ be used."
               (when :remainder
                 (asyncloop-echo id "Loop had been interrupted, resuming: %S" id)
                 (setf :last-idle-value 0)
-                (setf :active t)
                 (named-timer-idle-run id 1.0 nil #'asyncloop-chomp id 'politely)))
           ;; Start anew the full loop
           (asyncloop-echo id
             "Starting %S.  Left unexecuted last time: %S" id :remainder)
           (setf :remainder :funs)
           (setf :last-idle-value 0)
-          (setf :active t)
           (and on-start (funcall on-start id))
           (when :remainder
             (named-timer-run id 0.01 nil #'asyncloop-chomp id)))))))
