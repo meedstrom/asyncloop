@@ -57,7 +57,7 @@
 Arguments ARGS same as for `format'."
   (declare (indent defun))
   (with-current-buffer (asyncloop-debug-buffer id)
-    (goto-char (point-min))
+    (goto-char (point-max))
     (insert (apply #'format
                    (cons (concat (format-time-string "%T: ")
                                  (car args))
