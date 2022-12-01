@@ -36,6 +36,9 @@
 (defvar asyncloop-debug t
   "Whether to reveal buffers of debug messages.")
 
+(defvar asyncloop-debug-level 1
+  "Verbosity of debug.")
+
 (defun asyncloop-debug-buffer (loop)
   "Get/create a debug buffer associated with LOOP."
   (let ((bufname (concat (unless asyncloop-debug " ") "*"
@@ -62,9 +65,6 @@ Arguments ARGS same as for `format'."
     ;; something, as in (error (asyncloop-log loop "..."))
     (apply #'format args)))
 
-(defvar asyncloop-objects nil
-  "Alist identifying unique asyncloop objects.")
-
 (cl-defstruct (asyncloop (:constructor asyncloop-create)
                          (:copier nil))
   id
@@ -89,9 +89,8 @@ modifying these slots directly with `setf', `push' etc."
                           ,obj)))
      ,@body))
 
-(defun asyncloop-reset-all ()
-  (interactive)
-  (setq asyncloop-objects nil))
+(defvar asyncloop-objects nil
+  "Alist identifying unique asyncloop objects.")
 
 (defun asyncloop-cancel (loop)
   "Stop continuation of asyncloop identified by ID, and ensure
@@ -103,18 +102,14 @@ call the associated on-cancel function if it exists."
     (setf remainder nil)
     (and on-cancel (funcall on-cancel loop))))
 
-(defvar asyncloop-debug-level 1
-  "Verbosity of debug.")
+(defun asyncloop-reset-all ()
+  "Cancel all asyncloops and wipe `asyncloop-objects'."
+  (interactive)
+  (cl-loop for cell in asyncloop-objects
+           do (asyncloop-cancel (cdr cell)))
+  (setq asyncloop-objects nil))
 
-;; TODO: Improve performance.  To run ~10 calls per second, there seems to be
-;; about 0.5 seconds lost, i.e. one run of this boilerplate takes a full 0.050
-;; secs, which adds up ... in fact doubling how long Deianira takes to finish.
-;; Solutions:
-;; - run the profiler and launch deianira-mode
-;;   - OK it said 80% of CPU time was in funcall and 14% in GC.  That's great.  Maybe interpreted perf is worse, or the profiler misses something...
-;; - reimplement named-timer (it does some checks we don't need)
-;; - 
-(defun asyncloop-chomp (loop &optional polite)
+(defun asyncloop-chomp (loop)
   "Call the next function in the asyncloop LOOP.
 Then schedule another invocation of `asyncloop-chomp'.  Optional
 argument POLITE ensures waiting for at least 1 second of idle
@@ -149,32 +144,24 @@ double-calls."
                 (asyncloop-log loop
                   "Finished in %.3fs: %S" (float-time (time-since then)) func))
               ;; Schedule the next step.
-              ;; The remainder may be empty for two reasons, either there was
-              ;; no more to run, or the last function called asyncloop-cancel.
               (if remainder
-                  ;; TODO: Improve wall-time of whole loop.  Things just got
-                  ;; much worse now that I made it stay polite.  Probably should
-                  ;; go back to aggressive after 1 sec of idle.  And then
-                  ;; there's no need to have a "polite" argument since it never
-                  ;; makes a difference, I think.
                   (let ((idled-time (or (current-idle-time) 0)))
-                    (if (or (time-less-p 1.0 idled-time)
-                            (and (not polite)
-                                 (time-less-p last-idle-value idled-time)))
-                        ;; If user hasn't done any I/O since last chomp, proceed
-                        ;; immediately to the next call.  If being impolite (which
-                        ;; is the case on every new launch from `asyncloop-run'),
-                        ;; do so even within less than 1.0 second of idle, until
-                        ;; there is user activity.
-                        (named-timer-run id 0 nil #'asyncloop-chomp loop polite)
-                      ;; If user has done I/O, give Emacs a moment to respond to
-                      ;; user input, and stay polite for the rest of the loop.
-                      (named-timer-idle-run id 1.0 nil #'asyncloop-chomp loop 'politely))
+                    (if (time-less-p last-idle-value idled-time)
+                        ;; User hasn't done any I/O since last chomp, so proceed
+                        ;; immediately to the next call.
+                        (named-timer-run id 0 nil #'asyncloop-chomp loop)
+                      ;; User just did I/O, so free a moment to respond to it.
+                      (named-timer-idle-run id 1.0 nil #'asyncloop-chomp loop))
                     (setf last-idle-value idled-time))
+                ;; The remainder may be empty for two reasons, either there was
+                ;; no more to run, or the funcall earlier called
+                ;; `asyncloop-cancel' (we can't tell the difference).
                 (asyncloop-log loop
-                  "Loop finished (or cancelled) in wall time of %.3fs"
+                  "Loop finished (or cancelled) in wall-time of %.3fs"
                   (float-time (time-since starttime)))))
 
+          ;; TODO: Maybe make available an "on-interrupt" function -- better than
+          ;; "on-interrupt-discovered"?
           ((error quit)
            (asyncloop-log loop "Asyncloop interrupted because: %s" err)
            ;; Restore state so we don't skip a function just b/c it failed
