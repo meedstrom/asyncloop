@@ -74,7 +74,8 @@ Arguments ARGS same as for `format'."
   (just-launched nil)
   (on-cancel nil)
   (per-stage nil)
-  starttime)
+  starttime
+  (cancelled nil))
 
 (defmacro asyncloop-with-slots (slots obj &rest body)
   "Like `with-slots' but for a struct rather than an eieio class.
@@ -96,11 +97,13 @@ modifying these slots directly with `setf', `push' etc."
   "Stop continuation of asyncloop identified by ID, and ensure
 it'll be restarted fresh on the next `asyncloop-run'.  Finally,
 call the associated on-cancel function if it exists."
-  (asyncloop-with-slots (id remainder on-cancel just-launched) loop
-    (setf just-launched nil)
+  (asyncloop-with-slots (id remainder on-cancel just-launched cancelled) loop
     (named-timer-cancel id)
+    (setf just-launched nil)
     (setf remainder nil)
-    (and on-cancel (funcall on-cancel loop))))
+    (setf cancelled t)
+    (when on-cancel
+      (funcall on-cancel loop))))
 
 (defun asyncloop-reset-all ()
   "Cancel all asyncloops and wipe `asyncloop-objects'."
@@ -111,17 +114,14 @@ call the associated on-cancel function if it exists."
 
 (defun asyncloop-chomp (loop)
   "Call the next function in the asyncloop LOOP.
-Then schedule another invocation of `asyncloop-chomp'.  Optional
-argument POLITE ensures waiting for at least 1 second of idle
-time before invoking.
+Then schedule another invocation of `asyncloop-chomp'.
 
 Note that `asyncloop-chomp' must be called indirectly via
-`named-timer-run'; to call it any other way will hopefully
-trigger an error.  This mandate helps preserve the expected
+`named-timer-run'.  This mandate helps preserve the expected
 behavior from the chain of timers, since `named-timer-run'
 cancels any call that may have been pending, avoiding
 double-calls."
-  (asyncloop-with-slots (id remainder last-idle-value per-stage just-launched starttime) loop
+  (asyncloop-with-slots (id remainder last-idle-value per-stage just-launched starttime cancelled) loop
     (setf just-launched nil)
     (when per-stage
       (funcall per-stage loop))
@@ -129,20 +129,11 @@ double-calls."
       (let ((func (pop remainder)))
         (condition-case err
             (progn
-              (when (> asyncloop-debug-level 1)
-                ;; Ensure that the associated timer is inactive while this
-                ;; executes, because if active, that indicates something else
-                ;; called this, and we consider that usage pattern an error.
-                (when (or (member (named-timer-get id) timer-list)
-                          (member (named-timer-get id) timer-idle-list))
-                  (asyncloop-cancel loop)
-                  (error (asyncloop-log loop
-                           (concat "Timer active during execution.  Possibly"
-                                   " `asyncloop-chomp' was called directly.")))))
-              (let ((then (current-time)))
-                (funcall func loop) ;; Real work happens here
+              (let ((T (current-time))
+                    ;; Real work happens here
+                    (result (funcall func loop)))
                 (asyncloop-log loop
-                  "Finished in %.3fs: %S" (float-time (time-since then)) func))
+                  "Took %.3fs: %S: %s" (float-time (time-since T)) func result))
               ;; Schedule the next step.
               (if remainder
                   (let ((idled-time (or (current-idle-time) 0)))
@@ -153,12 +144,12 @@ double-calls."
                       ;; User just did I/O, so free a moment to respond to it.
                       (named-timer-idle-run id 1.0 nil #'asyncloop-chomp loop))
                     (setf last-idle-value idled-time))
-                ;; The remainder may be empty for two reasons, either there was
-                ;; no more to run, or the funcall earlier called
-                ;; `asyncloop-cancel' (we can't tell the difference).
-                (asyncloop-log loop
-                  "Loop finished (or cancelled) in wall-time of %.3fs"
-                  (float-time (time-since starttime)))))
+                (let ((total (float-time (time-since starttime))))
+                  (if cancelled
+                      (asyncloop-log loop
+                        "Loop cancelled, total wall-time %.3fs" total)
+                    (asyncloop-log loop
+                      "Loop finished, total wall-time %.3fs" total)))))
 
           ;; TODO: Maybe make available an "on-interrupt" function -- better than
           ;; "on-interrupt-discovered"?
@@ -215,6 +206,10 @@ At the very start of a fresh loop, also call the optional function
 ON-START.  This can be useful for preparing variables such that
 PER-STAGE will work as you intend on the first time.
 
+It does not matter what the functions in FUNS return, but the
+debug buffer prints the return values, which you can exploit by
+formatting a nice string.
+
 All the functions inside FUNS and those provided in the optional
 arguments are passed one argument: the loop object, which holds
 all of this metadata.  This lets you inspect and manipulate the
@@ -249,7 +244,7 @@ doing that before anything else in the function body."
                           :funs funs
                           :per-stage per-stage
                           :on-cancel on-cancel)))))
-    (asyncloop-with-slots (remainder last-idle-value funs just-launched starttime) loop
+    (asyncloop-with-slots (remainder last-idle-value funs just-launched starttime cancelled) loop
       ;; Ensure that being triggered by several concomitant hooks won't spam
       ;; the debug buffer, or worse, start multiple loops (somehow happens
       ;; -- maybe if a timer is at 0 seconds, it can't be cancelled?)
@@ -264,14 +259,17 @@ doing that before anything else in the function body."
                 (when on-interrupt-discovered
                   (funcall on-interrupt-discovered loop))
                 (when remainder
-                  (asyncloop-log loop "Loop had been interrupted, resuming")
+                  (asyncloop-log loop
+                    "Loop had been interrupted, resuming.  Left to run: %S"
+                    remainder)
                   (setf last-idle-value 0)
                   (named-timer-run id 0 nil #'asyncloop-chomp loop)))
             ;; Start anew the full loop
-            (asyncloop-log loop "Launching anew")
             (setf remainder funs)
             (setf last-idle-value 0)
             (setf starttime (current-time))
+            (setf cancelled nil)
+            (asyncloop-log loop "Launching anew")
             (when on-start
               (funcall on-start loop))
             (when remainder
