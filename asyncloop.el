@@ -145,11 +145,10 @@ double-calls."
                       (named-timer-idle-run id 1.0 nil #'asyncloop-chomp loop))
                     (setf last-idle-value idled-time))
                 (let ((total (float-time (time-since starttime))))
-                  (if cancelled
-                      (asyncloop-log loop
-                        "Loop cancelled, total wall-time %.3fs" total)
-                    (asyncloop-log loop
-                      "Loop finished, total wall-time %.3fs" total)))))
+                  (asyncloop-log loop
+                    "Loop %s, total wall-time %.3fs"
+                    (if cancelled "cancelled" "finished")
+                    total))))
 
           ;; TODO: Maybe make available an "on-interrupt" function -- better than
           ;; "on-interrupt-discovered"?
