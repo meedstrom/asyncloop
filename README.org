@@ -1,43 +1,48 @@
-#+TITLE: Asyncloop
-#+AUTHOR: Martin Edström
-#+EMAIL: meedstrom@teknik.io
-#+LANGUAGE: en
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
 # notice and this notice are preserved.  This file is offered as-is,
 # without any warranty.
 
+#+TITLE: Asyncloop
+#+AUTHOR: Martin Edström
+#+EMAIL: meedstrom@teknik.io
+#+LANGUAGE: en
+
 You have a big slow piece of Emacs Lisp, and it blocks Emacs for a painful few seconds.  You rack your brain: how to fix it?  You've already tuned the performance to your best ability.  You've ruled out async.el or shelling out, because your code needs to manipulate the current Emacs state.  So you go look up the libraries [[https://github.com/kiwanami/emacs-deferred/][deferred.el]] (inspired by jsdeferred) or emacs-aio (inspired by asyncio)...
 
-But wait!  These concepts can be way too sophisticated for your use-case, as they were for mine, and they take time to understand well enough to debug code that uses them.  I suspect my simple use-case is common:
+But wait!  These concepts can be way too sophisticated for your use-case, as they were for mine, and they take time to understand well enough to debug code that uses them.  You need to learn computer science terms like "iteration deferred object", "errorback" and "callback" before you can make heads or tails of what's going on.  At some point you're questioning the meaning of a function call and you realize you've spent 20 hours implementing something that ought've taken 1 hour.
+
+This package is not so abstract, but it suffices to solve an use case I suspect to be common.
 
 *Use case*
 
-Say you've carved up your big slow function into piecemeal functions each with imperceptible latency.  How will you call those functions?  Through a =dolist=?  No, dolists can't be paused midway through, so that'd be the same as the big slow function.  You need some kind of smarter dolist... perhaps utilizing =run-with-idle-timer=...
+Say you've carved up your big slow function into piecemeal functions with imperceptible latency.  How will you call those mini-functions?  Through a =dolist=?  No, dolists can't be paused midway through, so that'd be the same as the big slow function.  You need some kind of smarter dolist... perhaps something that utilizes =run-with-idle-timer= in between each step...
 
 Enter this library.  It helps you run a series of functions without hanging Emacs, implemented on a chain of timers.
 
 *Features*
 
-- weeds out many edge cases; rolling your own timer-based non-blocking mechanism is [[https://meedstrom.github.io/emacs-timer-gotchas][laden with gotchas]]
+- weeds out many edge cases; rolling your own timer-based non-blocking mechanism is laden with gotchas, [[https://meedstrom.github.io/emacs-timer-gotchas][as I've found]]
 
 - gets out of the way when the user is operating Emacs & should avert any noticeable lag
 
 - begins executing instantly, not, say, after a second of idle time, because a second can be all the time you get in the first place, e.g. the time between when user switches to minibuffer and when user begins to type
 
-- automatic profiling: check debug buffer to see how long each of your functions take
+- automatic profiling: check the debug buffer to see how long each of your functions take
 
-- made with 120 lines of code (and uses the excellent named-timer.el, another 50 lines)
+- made with 150 lines of code (and uses the excellent named-timer.el, another 50 lines)
 
 *Usage*
 
 The API consists mainly of =(asyncloop-run)=, consult its docstring.  You may also find reason to call:
 
 - =(asyncloop-remainder ID)=: access state of the running loop, so you can modify it with =setf=, =push=, =delq= etc.
-- =(asyncloop-defuse ID)=: cancel the running loop
-- =(asyncloop-echo ID &rest ARGS)=: send debug messages
+- =(asyncloop-cancel ID)=: cancel the running loop
+- =(asyncloop-log ID &rest ARGS)=: send debug messages
 
-For an example usage, ctrl+F "asyncloop" in [[https://github.com/meedstrom/deianira/blob/master/deianira.el][deianira.el]], the package that gave birth to this library.
+For an example usage, go find the use of "asyncloop-run" inside [[https://github.com/meedstrom/deianira/blob/master/deianira.el][deianira.el]], which gave birth to this library.
+
+During development, you may benefit from checking out the debug buffer associated with your loop.  The buffer name follows the pattern =*asyncloop-XXXXXXXXX*=, switch to it by typing something like =C-x b *asyncloop- TAB RET=.  To stop showing it, set =asyncloop-debug= to nil.
 
 *Anti-wishlist (won't implement)*
 
