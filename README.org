@@ -30,19 +30,19 @@ Enter this library.  It helps you run a series of functions without hanging Emac
 
 - automatic profiling: check the debug buffer to see how long each of your functions take
 
-- made with 150 lines of code (and uses the excellent named-timer.el, another 50 lines)
+- made with 200 lines of code (and uses the excellent named-timer.el, another 50 lines)
 
 *Usage*
 
 The API consists mainly of =(asyncloop-run)=, consult its docstring.  You may also find reason to call:
 
-- =(asyncloop-remainder ID)=: access state of the running loop, so you can modify it with =setf=, =push=, =delq= etc.
-- =(asyncloop-cancel ID)=: cancel the running loop
-- =(asyncloop-log ID &rest ARGS)=: send debug messages
+- =(asyncloop-remainder LOOP)=: access state of the running loop, so you can modify it with =setf=, =push=, =delq= etc.
+- =(asyncloop-cancel LOOP)=: cancel the running loop
+- =(asyncloop-log LOOP &rest ARGS)=: send message to the debug buffer.  Note that it can be more elegant to just pass an informative return value, as that is automatically printed in the debug buffer.
 
-For an example usage, go find the use of "asyncloop-run" inside [[https://github.com/meedstrom/deianira/blob/master/deianira.el][deianira.el]], which gave birth to this library.
+For an example usage, find the use of "asyncloop-run" inside [[https://github.com/meedstrom/deianira/blob/master/deianira.el][deianira.el]], which gave birth to this library.
 
-During development, you may benefit from checking out the debug buffer associated with your loop.  The buffer name follows the pattern =*asyncloop-XXXXXXXXX*=, switch to it by typing something like =C-x b *asyncloop- TAB RET=.  To stop showing it, set =asyncloop-debug= to nil.
+During development, you may learn a lot from setting =asyncloop-debug= to =t= and checking out the debug buffer associated with your loop.  The buffer name follows the pattern =*asyncloop-XXXXXXXXX*=, switch to it by typing something like =C-x b *asyncloop- TAB RET=.
 
 *Anti-wishlist (won't implement)*
 
