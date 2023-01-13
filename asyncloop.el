@@ -69,9 +69,14 @@ Arguments ARGS are the arguments for `format'."
 
 (defmacro asyncloop-with-slots (slots obj &rest body)
   "Like `with-slots' but for a struct rather than an eieio class.
-In similar fashion as `map-let', bind slot names SLOTS within the
-asyncloop object OBJ, and execute BODY.  Unlike `map-let', allow
-modifying these slots directly with `setf', `push' etc."
+That is to say, in similar fashion as `map-let', bind slot names
+SLOTS within the asyncloop object OBJ, and execute BODY.  Unlike
+`map-let', allow modifying these slots directly with `setf',
+`push' etc.  This also means that accessing their values takes
+them not from a memory-copy of the object, but the object itself,
+allowing changes made by child function calls to propagate back
+to the object accessed by the caller because they're the same
+object."
   (declare (indent 2))
   `(cl-symbol-macrolet
        ,(cl-loop
@@ -171,8 +176,9 @@ double-calls."
 ;; all be part of someone's `funs'.  The presence of these keywords can
 ;; encourage someone to write better code, but you could write something
 ;; educational in the README instead.
-;; TODO: Consider whether it can be elegant to use while-no-input instead of
-;; pushing on -remainder.
+;; TODO: Consider whether to instruct users to wrap their function bodies in
+;; while-no-input.
+;; TODO: Implement a timeout such that user doesn't need to call `asyncloop-reset-all'.
 ;;;###autoload
 (cl-defun asyncloop-run
     (funs &key on-interrupt-discovered per-stage on-start on-cancel origin debug
@@ -220,9 +226,10 @@ user types C-g at inopportune times, but it's also possible it's
 intentional, and we must always respect a C-g.  If you're having
 problems with insistent restarts, you could set
 ON-INTERRUPT-DISCOVERED to `asyncloop-cancel' to get some
-breathing room and watch the loop restart in full for debugging.
-The problem is likely appropriately solved with a sanity check in
-PER-STAGE or elsewhere.\)
+breathing room and watch the loop restart in full, which should
+help you debug what's going on.  The problem is likely
+appropriately solved with a sanity check in PER-STAGE or
+elsewhere.\)
 
 For each function in FUNS, call the optional function PER-STAGE
 just before.
@@ -230,10 +237,6 @@ just before.
 At the very start of a fresh loop, also call the optional function
 ON-START.  This can be useful for preparing variables such that
 PER-STAGE will work as you intend on the first time.
-
-It does not matter what the functions in FUNS return, but the
-debug buffer prints the return values, which you can exploit by
-formatting a nice string.
 
 All the functions inside FUNS and those provided in the optional
 arguments are passed one argument: the loop object, which holds
@@ -247,8 +250,13 @@ running loop by passing the object to any of:
 If `asyncloop-cancel' is called by any of these functions, it
 will also call the optional function ON-CANCEL.
 
+It does not matter what the functions in FUNS return, but the
+debug buffer prints the return values, so by returning something
+interesting \(ideally a string constructed by `format'), you can
+improve your debugging experience.
+
 To have a function in FUNS repeat itself until some condition is
-met \(in the style of a while-loop\), have it push itself onto the
+met \(in the style of a while-loop), have it push itself onto the
 result of `asyncloop-remainder'.  As always with while-loop
 patterns, take a moment to ensure that there's no way it will
 repeat forever.  If it's meant to decrement a counter by
