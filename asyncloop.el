@@ -17,7 +17,7 @@
 
 ;; This file is not part of GNU Emacs.
 
-;; Author:  <meedstrom@teknik.io>
+;; Author:  <meedstrom91@gmail.com>
 ;; Created: 2022-10-30
 ;; Version: 0.2.0-pre
 ;; Keywords: tools
