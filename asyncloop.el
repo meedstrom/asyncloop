@@ -275,6 +275,7 @@ buffer of debug messages \(named according to ID\).
 
 Changing DEBUG or ORIGIN will not change the ID generated."
   (declare (indent defun))
+  ;; (pcase-let ((`(,remainder ,last-idle-value ,funs ,just-launched ,starttime ,cancelled) loop))
   (asyncloop-with-slots (remainder last-idle-value funs just-launched starttime cancelled) loop
     ;; Ensure that being triggered by several concomitant hooks won't spam
     ;; the debug buffer, or worse, start multiple loops (somehow happens
