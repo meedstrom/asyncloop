@@ -86,9 +86,13 @@ object."
      ,@body))
 
 (defvar asyncloop-objects nil
-  "Alist identifying unique asyncloop objects.")
+  "Alist identifying unique asyncloop objects.
+Expected format:
+  '((ID1 . OBJECT1)
+    (ID2 . OBJECT2)
+    ...)")
 
-(defun asyncloop-timed-run (loop fn)
+(defun asyncloop-clock-funcall (loop fn)
   "Run FN, and print time elapsed to LOOP's debug buffer."
   (let ((fn-name (if (symbolp fn) fn "lambda"))
         (then (current-time))
@@ -112,10 +116,11 @@ look up `cl-block' and `cl-return'.)"
     (setf remainder nil)
     (setf cancelled t)
     (when on-cancel
-      (asyncloop-timed-run loop on-cancel))))
+      (asyncloop-clock-funcall loop on-cancel))))
 
 (defun asyncloop-reset-all ()
-  "Cancel all asyncloops and wipe `asyncloop-objects'."
+  "Cancel all asyncloops and wipe `asyncloop-objects'.
+Mainly for debugging."
   (interactive)
   (ignore-errors
     (cl-loop for cell in asyncloop-objects
@@ -143,7 +148,7 @@ double-calls."
         (condition-case err
             (progn
               ;; The real work happens here.
-              (asyncloop-timed-run loop func)
+              (asyncloop-clock-funcall loop func)
               ;; Schedule the next step.
               (if (and remainder (not cancelled))
                   (let ((idled-time (or (current-idle-time) 0)))
@@ -293,7 +298,7 @@ Changing DEBUG or ORIGIN will not change the ID generated."
 
        ((and remainder (not (equal remainder funs)))
         (when on-interrupt-discovered
-          (asyncloop-timed-run loop on-interrupt-discovered))
+          (asyncloop-clock-funcall loop on-interrupt-discovered))
         ;; In case on-interrupt-discovered sets cancelled
         (if cancelled
             (progn
@@ -304,10 +309,10 @@ Changing DEBUG or ORIGIN will not change the ID generated."
                 (asyncloop-log loop "Loop had been interrupted, resuming.  Left to run: %S" remainder)
                 (setf last-idle-value 0)
                 (named-timer-run id 0 nil #'asyncloop-chomp loop))
-            (error "Cancelled and remainder shouldn't both be nil now"))))
+            (error "CANCELLED and REMAINDER shouldn't both be nil now"))))
 
        (t
-        ;; Start anew the full loop
+        ;; Launch anew the full loop
         (setf remainder funs)
         (setf last-idle-value 0)
         (setf starttime (current-time))
@@ -315,14 +320,14 @@ Changing DEBUG or ORIGIN will not change the ID generated."
             (asyncloop-log loop "Loop started from %s" origin)
           (asyncloop-log loop "Loop started"))
         (when on-start
-          (asyncloop-timed-run loop on-start))
+          (asyncloop-clock-funcall loop on-start))
         (if cancelled
             (progn
               (setf just-launched nil)
               (asyncloop-log loop "Cancelled by ON-START"))
           (if remainder
               (named-timer-run id 0 nil #'asyncloop-chomp loop)
-            (error "Cancelled and remainder shouldn't both be nil now"))))))))
+            (error "CANCELLED and REMAINDER shouldn't both be nil now"))))))))
 
 (provide 'asyncloop)
 
