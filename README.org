@@ -8,25 +8,27 @@
 #+EMAIL: meedstrom91@gmail.com
 #+LANGUAGE: en
 
-You have a big slow piece of Emacs Lisp, and it blocks Emacs for a painful few seconds.  You rack your brain: how to fix it?  You've already tuned the performance to your best ability.  You've ruled out async.el or shelling out, because your code needs to manipulate the current Emacs state.  So you go look up the libraries [[https://github.com/kiwanami/emacs-deferred/][deferred.el]] (inspired by jsdeferred) or emacs-aio (inspired by asyncio)...
+You have a big slow piece of Emacs Lisp, and it blocks Emacs for a painful few seconds.  You rack your brain: how to fix it?  You've already tuned the performance to your best ability.  You've ruled out async.el or shelling out, because your code needs to manipulate the current Emacs state.  So you go look up the libraries [[https://github.com/kiwanami/emacs-deferred/][deferred.el]] (inspired by jsdeferred) or [[https://github.com/skeeto/emacs-aio][emacs-aio]] (inspired by asyncio)...
 
-But wait!  These concepts can be way too sophisticated for your use-case, as they were for mine, and they take time to understand well enough to debug code that uses them.  You need to learn computer science terms like "iteration deferred object", "errorback" and "callback" before you can make heads or tails of what's going on.  At some point you're questioning the meaning of a function call and you realize you've spent 20 hours implementing something that ought've taken 1 hour.
+But wait!  These concepts can be way too sophisticated for your use-case, as they were for mine.  They take time to understand well enough to debug code that uses them.  You need to learn computer-science terms like "iteration deferred object", "errorback" and "callback" before you can make heads or tails of what's going on.  At some point you're questioning the meaning of a function call and you realize you've spent 20 hours implementing something that ought've taken 1 hour.
 
 This package is not so abstract, but it suffices to solve an use case I suspect to be common.
 
 *Use case*
 
-Say you've carved up your big slow function into piecemeal functions with imperceptible latency.  How will you call those mini-functions?  Through a =dolist=?  No, dolists can't be paused midway through, so that'd be the same as the big slow function.  You need some kind of smarter dolist... perhaps something that utilizes =run-with-idle-timer= in between each step...
+Say you've carved up your big slow function into piecemeal functions, each with near-imperceptible latency.  How will you call those mini-functions?  Through a =dolist=?  No, dolists can't be paused midway through, so that'd block just as long as the whole function.  You need some kind of smarter dolist... perhaps something that utilizes =run-with-idle-timer= in between each step...
 
 Enter this library.  It helps you run a series of functions without hanging Emacs, implemented on a chain of timers.
 
 *Features*
 
-- weeds out many edge cases; rolling your own timer-based non-blocking mechanism is laden with gotchas, [[https://meedstrom.github.io/emacs-timer-gotchas][as I've found]]
+- weeds out many edge cases; rolling your own timer-based non-blocking mechanism is laden with gotchas, [[https://edstrom.dev/posts/emacs-timer-gotchas][as I've found]]
 
-- gets out of the way when the user is operating Emacs & should avert any noticeable lag
+- gets out of the way when the user is operating Emacs
 
 - begins executing instantly, not, say, after a second of idle time, because a second can be all the time you get in the first place, e.g. the time between when user switches to minibuffer and when user begins to type
+
+  - also zero unnecessary delay in-between function calls
 
 - automatic profiling: check the debug buffer to see how long each of your functions take
 
@@ -38,12 +40,17 @@ The API consists mainly of =(asyncloop-run)=, consult its docstring.  You may al
 
 - =(asyncloop-remainder LOOP)=: access state of the running loop, so you can modify it with =setf=, =push=, =delq= etc.
 - =(asyncloop-cancel LOOP)=: cancel the running loop
-- =(asyncloop-log LOOP &rest ARGS)=: send message to the debug buffer.  Note that it can be more elegant to just pass an informative return value, as that is automatically printed in the debug buffer.
+- =(asyncloop-log LOOP &rest ARGS)=: send message to the debug buffer.  Note that it's usually more elegant for each mini-function to just pass an informative return value, as that is automatically printed in the debug buffer.
 
 For an example usage, find the use of "asyncloop-run" inside [[https://github.com/meedstrom/deianira/blob/master/deianira.el][deianira.el]], which gave birth to this library.
 
 During development, you may learn a lot from setting =asyncloop-debug= to =t= and checking out the debug buffer associated with your loop.  The buffer name follows the pattern =*asyncloop-XXXXXXXXX*=, switch to it by typing something like =C-x b *asyncloop- TAB RET=.
 
+*Hygiene tips*
+
+How to write each mini-function: consider wrapping the bodies in =unwind-protect= or =while-no-input= or both.  It's also a good idea to write a general sanity check and call it the top of each function, and likewise an after-cancel cleanup after each call to =asyncloop-cancel= (if there's anything to clean up).  Of course this depends on your needs!
+
 *Anti-wishlist (won't implement)*
 
-- The argument-passing style enabled in deferred.el among others, where you can use the return value from each function as input for the next function, sounds elegant but I've found it awful for debugging (perhaps I was missing some tooling).  I recommend instead the "crude" approach of keeping state in external variables that you can inspect along the way, making it easy to figure out what work a broken chain did or didn't get done.  This approach also helps clarify the intent of your code because you have to name those variables.
+- The argument-passing style enabled in deferred.el among others, where you can use the return value from each function as input for the next function, sounds elegant but I've found it awful for debugging (perhaps I was missing some tooling).
+  - I recommend instead the "crude" approach of keeping state in external variables that you can inspect along the way, making it easy to figure out what work a broken chain did or didn't get done.  This approach also helps clarify the intent of your code because you have to name those variables.  The more stateful your program, the more this helps.

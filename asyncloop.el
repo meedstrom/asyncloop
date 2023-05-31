@@ -61,8 +61,6 @@ Arguments ARGS are the arguments for `format'."
   (remainder nil)
   (last-idle-value 0)
   (just-launched nil)
-  (on-cancel nil)
-  (per-stage nil)
   starttime
   (cancelled nil)
   debug)
@@ -104,20 +102,17 @@ Expected format:
 (defun asyncloop-cancel (loop)
   "Stop asyncloop LOOP from executing further functions.
 Ensure the loop will restart fresh on the next call to
-`asyncloop-run'.  Finally, call the associated ON-CANCEL function
-if one was specified \(see `asyncloop-run').
+`asyncloop-run'.
 
 \(Tip: If you're a novice Elisp programmer, be aware that calling
 this in the middle of a function body won't interrupt the rest of
 it; will still complete normally.  If you want a nonlocal exit,
 look up `cl-block' and `cl-return'.)"
-  (asyncloop-with-slots (id remainder on-cancel just-launched cancelled) loop
+  (asyncloop-with-slots (id remainder just-launched cancelled) loop
     (named-timer-cancel id)
     (setf just-launched nil)
     (setf remainder nil)
-    (setf cancelled t)
-    (when on-cancel
-      (asyncloop-clock-funcall loop on-cancel))))
+    (setf cancelled t)))
 
 (defun asyncloop-reset-all ()
   "Cancel all asyncloops and wipe `asyncloop-objects'.
@@ -137,12 +132,10 @@ Note that `asyncloop-chomp' must be called indirectly via
 behavior from the chain of timers, since `named-timer-run'
 cancels any call that may have been pending, avoiding
 double-calls."
-  (asyncloop-with-slots (id remainder last-idle-value per-stage just-launched starttime cancelled) loop
+  (asyncloop-with-slots (id remainder last-idle-value just-launched starttime cancelled) loop
     (setf just-launched nil)
-    (when per-stage
-      (funcall per-stage loop))
-    ;; The check `(not cancelled)' is not essential, but programmers could make
-    ;; the mistake of repopulating `remainder' after a call to
+    ;; The check `(not cancelled)' should always return true, but programmers
+    ;; could make the mistake of repopulating `remainder' after a call to
     ;; `asyncloop-cancel' inside FUNC, thus we check both.
     (when (and remainder (not cancelled))
       (let ((func (pop remainder)))
@@ -177,32 +170,15 @@ double-calls."
         (if cancelled "cancelled" "finished")
         (float-time (time-since starttime))))))
 
-;; TODO: Maybe draw a flowchart and refactor, eliminating as many special cases
-;; as possible -- it occurs to me that on-start, per-stage and on-cancel COULD
-;; all be part of someone's `funs'.  The presence of these keywords can
-;; encourage someone to write better code, but you could write something
-;; educational in the README instead.
-;; TODO: Consider whether to instruct users to wrap their function bodies in
-;; while-no-input.
+;; TODO: Maybe draw a flowchart and refactor, fully defining all states
 ;; TODO: Implement a timeout such that user doesn't need to call `asyncloop-reset-all'.
 ;;;###autoload
 (cl-defun asyncloop-run
-    (funs &key on-interrupt-discovered per-stage on-start on-cancel origin debug
+    (funs &key on-interrupt-discovered origin debug
           (id (intern (concat "asyncloop-"
                               (number-to-string
-                               (abs (sxhash (list funs
-                                                  on-interrupt-discovered
-                                                  per-stage
-                                                  on-start
-                                                  on-cancel)))))))
-          &aux (loop (or (alist-get id asyncloop-objects)
-                         (setf (alist-get id asyncloop-objects)
-                               (asyncloop-create
-                                :id id
-                                :funs funs
-                                :per-stage per-stage
-                                :on-cancel on-cancel
-                                :debug debug)))))
+                               (abs (sxhash (list on-interrupt-discovered
+                                                  funs))))))))
   "Attempt to run the series of functions in list FUNS.
 
 Run them as a pseudo-asynchronous loop that pauses for user
@@ -234,15 +210,8 @@ problems with insistent restarts, you could set
 ON-INTERRUPT-DISCOVERED to `asyncloop-cancel' to get some
 breathing room and watch the loop restart in full, which should
 help you debug what's going on.  The problem is likely
-appropriately solved with a sanity check in PER-STAGE or
-elsewhere.\)
-
-For each function in FUNS, call the optional function PER-STAGE
-just before.
-
-At the very start of a fresh loop, also call the optional function
-ON-START.  This can be useful for preparing variables such that
-PER-STAGE will work as you intend on the first time.
+appropriately solved with a sanity check at the start of every
+function in FUNS.\)
 
 All the functions inside FUNS and those provided in the optional
 arguments are passed one argument: the loop object, which holds
@@ -252,9 +221,6 @@ running loop by passing the object to any of:
 - `asyncloop-cancel'
 - `asyncloop-remainder'
 - `asyncloop-log'
-
-If `asyncloop-cancel' is called by any of these functions, it
-will also call the optional function ON-CANCEL.
 
 It does not matter what the functions in FUNS return, but the
 debug buffer prints the return values, so by returning something
@@ -277,55 +243,54 @@ messages: when the loop starts, it'll say \"Loop started from
 ORIGIN\".
 
 Optional argument DEBUG controls whether or not to create a
-buffer of debug messages \(named according to ID\).
-
-Changing DEBUG or ORIGIN will not change the ID generated."
+buffer of debug messages \(named according to ID\)."
   (declare (indent defun))
-  ;; (pcase-let ((`(,remainder ,last-idle-value ,funs ,just-launched ,starttime ,cancelled) loop))
-  (asyncloop-with-slots (remainder last-idle-value funs just-launched starttime cancelled) loop
-    ;; Ensure that being triggered by several concomitant hooks won't spam
-    ;; the debug buffer, or worse, start multiple loops (somehow happens
-    ;; -- maybe if a timer is at 0 seconds, it can't be cancelled?).
-    (if just-launched
-        (when (> (float-time (time-since just-launched)) 300)
-          (error "Asyncloop seems stuck, please file a bug: %S" id))
-      (setf just-launched (current-time))
-      (setf cancelled nil)
+  (let ((loop (or (alist-get id asyncloop-objects)
+                  (setf (alist-get id asyncloop-objects)
+                        (asyncloop-create
+                         :id id
+                         :funs funs
+                         :debug debug)))))
+    ;; (pcase-let ((`(,remainder ,last-idle-value ,funs ,just-launched ,starttime ,cancelled) loop))
+    (asyncloop-with-slots (remainder last-idle-value funs just-launched starttime cancelled) loop
+      ;; Ensure that being triggered by several concomitant hooks won't spam
+      ;; the debug buffer, or worse, start multiple loops (somehow happens
+      ;; -- maybe if a timer is at 0 seconds, it can't be cancelled?).
+      (if just-launched
+          (when (> (float-time (time-since just-launched)) 300)
+            (error "Asyncloop seems stuck, please file a bug: %S" id))
+        (setf just-launched (current-time))
+        (setf cancelled nil)
 
-      (cond
-       ((or (member (named-timer-get id) timer-list)
-            (member (named-timer-get id) timer-idle-list))
-        (asyncloop-log loop "Already running, letting it continue"))
+        (cond
+         ((or (member (named-timer-get id) timer-list)
+              (member (named-timer-get id) timer-idle-list))
+          (asyncloop-log loop "Already running, letting it continue"))
 
-       ((and remainder (not (equal remainder funs)))
-        (when on-interrupt-discovered
-          (asyncloop-clock-funcall loop on-interrupt-discovered))
-        ;; In case on-interrupt-discovered sets cancelled
-        (if cancelled
-            (progn
-              (setf just-launched nil)
-              (asyncloop-log loop "Cancelled by ON-INTERRUPT-DISCOVERED"))
-          (if remainder
+         ((and remainder (not (equal remainder funs)))
+          (when on-interrupt-discovered
+            (asyncloop-clock-funcall loop on-interrupt-discovered))
+          ;; In case ON-INTERRUPT-DISCOVERED sets CANCELLED
+          (if cancelled
               (progn
-                (asyncloop-log loop "Loop had been interrupted, resuming.  Left to run: %S" remainder)
-                (setf last-idle-value 0)
-                (named-timer-run id 0 nil #'asyncloop-chomp loop))
-            (error "CANCELLED and REMAINDER shouldn't both be nil now"))))
+                (setf just-launched nil)
+                (asyncloop-log loop "Cancelled by ON-INTERRUPT-DISCOVERED"))
+            (if remainder
+                (progn
+                  (asyncloop-log loop "Loop had been interrupted, resuming.  Left to run: %S" remainder)
+                  (setf last-idle-value 0)
+                  (named-timer-run id 0 nil #'asyncloop-chomp loop))
+              (error "CANCELLED and REMAINDER shouldn't both be nil now"))))
 
-       (t
-        ;; Launch anew the full loop
-        (setf remainder funs)
-        (setf last-idle-value 0)
-        (setf starttime (current-time))
-        (if origin
-            (asyncloop-log loop "Loop started from %s" origin)
-          (asyncloop-log loop "Loop started"))
-        (when on-start
-          (asyncloop-clock-funcall loop on-start))
-        (if cancelled
-            (progn
-              (setf just-launched nil)
-              (asyncloop-log loop "Cancelled by ON-START"))
+         (t
+          ;; Launch anew the full loop
+          (setf remainder funs)
+          (setf last-idle-value 0)
+          (setf starttime (current-time))
+          (if origin
+              (asyncloop-log loop "Loop started from %s" origin)
+            (asyncloop-log loop "Loop started"))
+          (cl-assert (null cancelled))
           (if remainder
               (named-timer-run id 0 nil #'asyncloop-chomp loop)
             (error "CANCELLED and REMAINDER shouldn't both be nil now"))))))))
