@@ -70,13 +70,14 @@ Arguments ARGS are the arguments for `format'."
 (defmacro asyncloop-with-slots (slots obj &rest body)
   "Like `with-slots' but for a struct rather than an eieio class.
 That is to say, in similar fashion as `map-let', bind slot names
-SLOTS within the asyncloop object OBJ, and execute BODY.  Unlike
-`map-let', allow modifying these slots directly with `setf',
-`push' etc.  This also means that accessing their values takes
-them not from a memory-copy of the object, but the object itself,
-allowing changes made by child function calls to propagate back
-to the object accessed by the caller because they're the same
-object."
+SLOTS referring to fields of the asyncloop object OBJ, and
+execute BODY.
+
+Unlike `map-let', allow modifying these slots directly with
+`setf', `push' etc.  This also means that accessing their values
+takes them not from a memory-copy of the object, but directly
+refers the object, allowing changes made by child function calls
+to propagate back to the object accessed by the caller."
   (declare (indent 2))
   `(cl-symbol-macrolet
        ,(cl-loop
