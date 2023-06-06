@@ -173,12 +173,7 @@ double-calls."
 ;; TODO: Maybe draw a flowchart and refactor, fully defining all states
 ;; TODO: Implement a timeout such that user doesn't need to call `asyncloop-reset-all'.
 ;;;###autoload
-(cl-defun asyncloop-run
-    (funs &key on-interrupt-discovered origin debug
-          (id (intern (concat "asyncloop-"
-                              (number-to-string
-                               (abs (sxhash (list on-interrupt-discovered
-                                                  funs))))))))
+(cl-defun asyncloop-run (funs &key on-interrupt-discovered debug launch-message id)
   "Attempt to run the series of functions in list FUNS.
 
 Run them as a pseudo-asynchronous loop that pauses for user
@@ -192,16 +187,16 @@ only the first invocation is likely to do anything, and the rest
 will no-op in favor of letting the already running asyncloop
 finish.
 
-Though you'll probably not need it, you can supply a custom
-symbol ID, which predetermines the name of the associated debug
-buffer: \"*ID*\", and the timer in `named-timer-table'.
+(Though you'll likely not need it, you can supply a custom symbol
+ID, which also predetermines the name of the associated debug
+buffer: \"*ID*\", and the timer in `named-timer-table'.)
 
 If the previous loop with the same identifier seems to have been
 interrupted and left in an incomplete state, call the optional
 function ON-INTERRUPT-DISCOVERED, then resume the loop, picking
-up where it was left off.  To reiterate, this doesn't happen
-exactly when the interrupt happens, only the next time
-`asyncloop-run' itself is triggered.
+up where it was left off.  To reiterate, this doesn't happen when
+the interrupt happens, only the next time `asyncloop-run' itself
+is triggered.
 
 \(Tip: It's not unlikely to get spurious interrupts because the
 user types C-g at inopportune times, but it's also possible it's
@@ -238,13 +233,17 @@ doing that before anything else in the function body.
 If a loop does end up repeating forever, you can stop it with
 \\[asyncloop-reset-all].
 
-Optional argument ORIGIN is a string with which to enrich debug
-messages: when the loop starts, it'll say \"Loop started from
-ORIGIN\".
-
 Optional argument DEBUG controls whether or not to create a
-buffer of debug messages \(named according to ID\)."
+buffer of debug messages \(named according to ID\).
+
+Optional argument LAUNCH-MESSAGE is a string with which to enrich
+debug messages: it'll be printed when the loop starts."
   (declare (indent defun))
+  (unless id
+    (setq id (intern (concat "asyncloop-"
+                             (number-to-string
+                              (abs (sxhash (list on-interrupt-discovered
+                                                 funs))))))))
   (let ((loop (or (alist-get id asyncloop-objects)
                   (setf (alist-get id asyncloop-objects)
                         (asyncloop-create
@@ -270,7 +269,7 @@ buffer of debug messages \(named according to ID\)."
          ((and remainder (not (equal remainder funs)))
           (when on-interrupt-discovered
             (asyncloop-clock-funcall loop on-interrupt-discovered))
-          ;; In case ON-INTERRUPT-DISCOVERED sets CANCELLED
+          ;; In case the ON-INTERRUPT-DISCOVERED function sets CANCELLED
           (if cancelled
               (progn
                 (setf just-launched nil)
@@ -287,8 +286,8 @@ buffer of debug messages \(named according to ID\)."
           (setf remainder funs)
           (setf last-idle-value 0)
           (setf starttime (current-time))
-          (if origin
-              (asyncloop-log loop "Loop started from %s" origin)
+          (if launch-message
+              (asyncloop-log loop "Loop started. %s" launch-message)
             (asyncloop-log loop "Loop started"))
           (cl-assert (null cancelled))
           (if remainder
