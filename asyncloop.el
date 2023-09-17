@@ -19,80 +19,25 @@
 
 ;; Author:  <meedstrom91@gmail.com>
 ;; Created: 2022-10-30
-<<<<<<< HEAD
-;; Version: 0.2.0
-;; Keywords: tools
-;; Homepage: https://github.com/meedstrom/asyncloop
-;; Package-Requires: ((emacs "28.1") (named-timer "0.1"))
-=======
 ;; Version: 0.3.0-pre
 ;; Keywords: tools
 ;; Homepage: https://github.com/meedstrom/asyncloop
 ;; Package-Requires: ((emacs "28.1"))
->>>>>>> 8a7c2e9 (Bugfix)
 
 ;;; Commentary:
 
 ;; Use `asyncloop-run' to call a series of functions without hanging Emacs.
 
-<<<<<<< HEAD
-;;; Code:
-
-(require 'cl-lib)
-(require 'named-timer) ;; prevents bugs every day
-
-(defun asyncloop-debug-buffer (loop)
-  "Get/create a debug buffer associated with LOOP."
-  (let ((bufname (concat "*" (symbol-name (asyncloop-id loop)) "*")))
-    (or (get-buffer bufname)
-        (with-current-buffer (get-buffer-create bufname)
-          (set (make-local-variable 'window-point-insertion-type) t)
-          (current-buffer)))))
-=======
 ;; TODO: orderless-initialisms to ignore ^dei-
 
 ;;; Code:
 
 (require 'cl-lib)
->>>>>>> 8a7c2e9 (Bugfix)
 
 (defun asyncloop-log (loop &rest args)
   "Log a message to the debug buffer associated with LOOP.
 Arguments ARGS are the arguments for `format'."
   (declare (indent 1))
-<<<<<<< HEAD
-  (when (asyncloop-debug loop)
-    (let ((x (apply #'format args)))
-      (with-current-buffer (asyncloop-debug-buffer loop)
-        (goto-char (point-max))
-        (insert (format-time-string "%T: ") x)
-        (newline)
-        ;; Allow convenient sexp like (error (asyncloop-log loop "..."))
-        x))))
-
-(cl-defstruct (asyncloop (:constructor asyncloop-create)
-                         (:copier nil))
-  id
-  funs
-  (remainder nil)
-  (last-idle-value 0)
-  (just-launched nil)
-  starttime
-  (cancelled nil)
-  debug)
-
-(defmacro asyncloop-with-slots (slots obj &rest body)
-  "Like `with-slots' but for a struct rather than an eieio class.
-That is to say, in similar fashion as `map-let', bind slot names
-SLOTS referring to fields of the asyncloop object OBJ, and
-execute BODY.
-
-Unlike `map-let', allow modifying these slots directly with
-`setf', `push' etc.  This also means that accessing their values
-takes them not from a memory-copy of the object, but directly
-refers the object, allowing changes made by child function calls
-to propagate back to the object accessed by the caller."
-=======
   (let ((buf (asyncloop-debug-buffer loop)))
     (when (and buf (buffer-live-p buf))
       (with-current-buffer buf
@@ -116,7 +61,6 @@ to propagate back to the object accessed by the caller."
 
 (defmacro asyncloop-with-slots (slots obj &rest body)
   "Like EIEIO's `with-slots', but for our struct type."
->>>>>>> 8a7c2e9 (Bugfix)
   (declare (indent 2))
   `(cl-symbol-macrolet
        ,(cl-loop
@@ -133,11 +77,7 @@ Expected format:
     ...)")
 
 (defun asyncloop-clock-funcall (loop fn)
-<<<<<<< HEAD
-  "Run FN, and print time elapsed to LOOP's debug buffer."
-=======
   "Run FN, then print elapsed time to LOOP's debug buffer."
->>>>>>> 8a7c2e9 (Bugfix)
   (let ((fn-name (if (symbolp fn) fn "lambda"))
         (then (current-time))
         (result (funcall fn loop)))
@@ -145,68 +85,6 @@ Expected format:
       "Took %.2fs: %s: %s" (float-time (time-since then)) fn-name result)))
 
 (defun asyncloop-cancel (loop)
-<<<<<<< HEAD
-  "Stop asyncloop LOOP from executing further functions.
-Ensure the loop will restart fresh on the next call to
-`asyncloop-run'.
-
-\(Tip: If you're a novice Elisp programmer, be aware that calling
-this in the middle of a function body won't interrupt the rest of
-it; will still complete normally.  If you want a nonlocal exit,
-look up `cl-block' and `cl-return'.)"
-  (asyncloop-with-slots (id remainder just-launched cancelled) loop
-    (named-timer-cancel id)
-    (setf just-launched nil)
-    (setf remainder nil)
-    (setf cancelled t)))
-
-(defun asyncloop-reset-all ()
-  "Cancel all asyncloops and wipe `asyncloop-objects'.
-Mainly for debugging."
-  (interactive)
-  (ignore-errors
-    (cl-loop for cell in asyncloop-objects
-             do (asyncloop-cancel (cdr cell))))
-  (setq asyncloop-objects nil))
-
-(defun asyncloop-chomp (loop)
-  "Call the next function in the asyncloop LOOP.
-Then schedule another invocation of `asyncloop-chomp'.
-
-Note that `asyncloop-chomp' must be called indirectly via
-`named-timer-run'.  This mandate helps preserve the expected
-behavior from the chain of timers, since `named-timer-run'
-cancels any call that may have been pending, avoiding
-double-calls."
-  (asyncloop-with-slots (id remainder last-idle-value just-launched starttime cancelled) loop
-    (setf just-launched nil)
-    ;; The check `(not cancelled)' should always return true, but programmers
-    ;; could make the mistake of repopulating `remainder' after a call to
-    ;; `asyncloop-cancel' inside FUNC, thus we check both.
-    (when (and remainder (not cancelled))
-      (let ((func (pop remainder)))
-        (condition-case err
-            (progn
-              ;; The real work happens here.
-              (asyncloop-clock-funcall loop func)
-              ;; Schedule the next step.
-              (if (and remainder (not cancelled))
-                  (let ((idled-time (or (current-idle-time) 0)))
-                    (if (time-less-p last-idle-value idled-time)
-                        ;; User hasn't done any I/O since last chomp, so proceed
-                        ;; immediately to the next call.
-                        (named-timer-run id 0 nil #'asyncloop-chomp loop)
-                      ;; User just did I/O, so free a moment to respond to it.
-                      (named-timer-idle-run id 1.0 nil #'asyncloop-chomp loop))
-                    (setf last-idle-value idled-time))))
-
-          ;; TODO: Maybe make available an "on-interrupt" function -- better than
-          ;; "on-interrupt-discovered"?
-          (t
-           (asyncloop-log loop "Asyncloop interrupted because: %s" err)
-           ;; Restore state so we don't skip a function just b/c it failed
-           (push func remainder)
-=======
   "Stop asyncloop LOOP from executing more queued functions.
 Ensure the loop will restart fresh on the next call to
 `asyncloop-run'."
@@ -248,61 +126,10 @@ Then schedule another invocation of `asyncloop-chomp'."
            ;; correctness.
            (push func remainder)
            
->>>>>>> 8a7c2e9 (Bugfix)
            (when (eq (car err) 'error)
              (setf remainder nil)
              (error "Function %S failed: %s" func (cdr err)))))))
 
-<<<<<<< HEAD
-    (when (or cancelled (null remainder))
-      (asyncloop-log loop
-        "Loop %s, total wall-time %.2fs"
-        (if cancelled "cancelled" "finished")
-        (float-time (time-since starttime))))))
-
-;; TODO: Maybe draw a flowchart and refactor, fully defining all states
-;; TODO: Implement a timeout such that user doesn't need to call `asyncloop-reset-all'.
-;;;###autoload
-(cl-defun asyncloop-run (funs &key on-interrupt-discovered debug launch-message id)
-  "Attempt to run the series of functions in list FUNS.
-
-Run them as a pseudo-asynchronous loop that pauses for user
-activity to keep Emacs feeling snappy.
-
-The loop as a whole is assigned an identifier based on uniqueness
-of input, and refuses to run multiple instances with the same
-identifier.  That means that if, perhaps accidentally, you call
-this several times with identical input in a short timeframe,
-only the first invocation is likely to do anything, and the rest
-will no-op in favor of letting the already running asyncloop
-finish.
-
-(Though you'll likely not need it, you can supply a custom symbol
-ID, which also predetermines the name of the associated debug
-buffer: \"*ID*\", and the timer in `named-timer-table'.)
-
-If the previous loop with the same identifier seems to have been
-interrupted and left in an incomplete state, call the optional
-function ON-INTERRUPT-DISCOVERED, then resume the loop, picking
-up where it was left off.  To reiterate, this doesn't happen when
-the interrupt happens, only the next time `asyncloop-run' itself
-is triggered.
-
-\(Tip: It's not unlikely to get spurious interrupts because the
-user types C-g at inopportune times, but it's also possible it's
-intentional, and we must always respect a C-g.  If you're having
-problems with insistent restarts, you could set
-ON-INTERRUPT-DISCOVERED to `asyncloop-cancel' to get some
-breathing room and watch the loop restart in full, which should
-help you debug what's going on.  The problem is likely
-appropriately solved with a sanity check at the start of every
-function in FUNS.\)
-
-All the functions inside FUNS and those provided in the optional
-arguments are passed one argument: the loop object, which holds
-all of this metadata.  This lets you inspect and manipulate the
-running loop by passing the object to any of:
-=======
     (when (null remainder)
       (let ((elapsed (float-time (time-since starttime))))
         (asyncloop-log loop "Loop finished, total wall-time %.2fs" elapsed)))))
@@ -340,61 +167,11 @@ ON-INTERRUPT-DISCOVERED function, are passed one argument: the
 loop object, which holds some metadata.  This lets those
 functions inspect and manipulate the running loop by passing the
 object on to any of:
->>>>>>> 8a7c2e9 (Bugfix)
 
 - `asyncloop-cancel'
 - `asyncloop-remainder'
 - `asyncloop-log'
 
-<<<<<<< HEAD
-It does not matter what the functions in FUNS return, but the
-debug buffer prints the return values, so by returning something
-interesting \(ideally a string constructed by `format'), you can
-improve your debugging experience.
-
-To have a function in FUNS repeat itself until some condition is
-met \(in the style of a while-loop), have it push itself onto the
-result of `asyncloop-remainder'.  As always with while-loop
-patterns, take a moment to ensure that there's no way it will
-repeat forever.  If it's meant to decrement a counter by
-`cl-decf' or consume a list one item at a time by `pop', consider
-doing that before anything else in the function body.
-
-If a loop does end up repeating forever, you can stop it with
-\\[asyncloop-reset-all].
-
-Optional argument DEBUG controls whether or not to create a
-buffer of debug messages \(named according to ID\).
-
-Optional argument LAUNCH-MESSAGE is a string with which to enrich
-debug messages: it'll be printed when the loop starts."
-  (declare (indent defun))
-  (unless id
-    (setq id (intern (concat "asyncloop-"
-                             (number-to-string
-                              (abs (sxhash (list on-interrupt-discovered
-                                                 funs))))))))
-  (let ((loop (or (alist-get id asyncloop-objects)
-                  (setf (alist-get id asyncloop-objects)
-                        (asyncloop-create
-                         :id id
-                         :funs funs
-                         :debug debug)))))
-    ;; (pcase-let ((`(,remainder ,last-idle-value ,funs ,just-launched ,starttime ,cancelled) loop))
-    (asyncloop-with-slots (remainder last-idle-value funs just-launched starttime cancelled) loop
-      ;; Ensure that being triggered by several concomitant hooks won't spam
-      ;; the debug buffer, or worse, start multiple loops (somehow happens
-      ;; -- maybe if a timer is at 0 seconds, it can't be cancelled?).
-      (if just-launched
-          (when (> (float-time (time-since just-launched)) 300)
-            (error "Asyncloop seems stuck, please file a bug: %S" id))
-        (setf just-launched (current-time))
-        (setf cancelled nil)
-
-        (cond
-         ((or (member (named-timer-get id) timer-list)
-              (member (named-timer-get id) timer-idle-list))
-=======
 To have a function in FUNS repeat itself until some condition is
 met (in the style of a while-loop), have it push itself onto the
 result of `asyncloop-remainder', effectively shoving itself back
@@ -444,50 +221,25 @@ you can improve your debugging experience."
         (setf just-launched t)
         (cond
          (chomp-is-scheduled
->>>>>>> 8a7c2e9 (Bugfix)
           (asyncloop-log loop "Already running, letting it continue"))
 
          ((and remainder (not (equal remainder funs)))
           (when on-interrupt-discovered
             (asyncloop-clock-funcall loop on-interrupt-discovered))
-<<<<<<< HEAD
-          ;; In case the ON-INTERRUPT-DISCOVERED function sets CANCELLED
-          (if cancelled
-              (progn
-                (setf just-launched nil)
-                (asyncloop-log loop "Cancelled by ON-INTERRUPT-DISCOVERED"))
-            (if remainder
-                (progn
-                  (asyncloop-log loop "Loop had been interrupted, resuming.  Left to run: %S" remainder)
-                  (setf last-idle-value 0)
-                  (named-timer-run id 0 nil #'asyncloop-chomp loop))
-              (error "CANCELLED and REMAINDER shouldn't both be nil now"))))
-=======
           (if remainder
               (progn
                 (asyncloop-log loop "Loop had been interrupted, resuming.  Left to run: %S" remainder)
                 (setf last-idle-value 0)
                 (run-with-timer 0 nil #'asyncloop-chomp loop))
             (asyncloop-log loop "Cancelled by ON-INTERRUPT-DISCOVERED")))
->>>>>>> 8a7c2e9 (Bugfix)
 
          (t
           ;; Launch anew the full loop
           (setf remainder funs)
           (setf last-idle-value 0)
           (setf starttime (current-time))
-<<<<<<< HEAD
-          (if launch-message
-              (asyncloop-log loop "Loop started. %s" launch-message)
-            (asyncloop-log loop "Loop started"))
-          (cl-assert (null cancelled))
-          (if remainder
-              (named-timer-run id 0 nil #'asyncloop-chomp loop)
-            (error "CANCELLED and REMAINDER shouldn't both be nil now"))))))))
-=======
           (asyncloop-log loop "Loop started")
           (run-with-timer 0 nil #'asyncloop-chomp loop)))))))
->>>>>>> 8a7c2e9 (Bugfix)
 
 (provide 'asyncloop)
 
