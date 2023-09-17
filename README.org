@@ -26,6 +26,7 @@ Enter this library.  It helps you run a series of functions without hanging Emac
 
 - gets out of the way when the user is operating Emacs
 
+<<<<<<< HEAD
 - begins executing instantly, not, say, after a second of idle time, because a second can be all the time you get in the first place, e.g. the time between when user switches to minibuffer and when user begins to type
 
   - also zero unnecessary delay in-between function calls
@@ -33,6 +34,15 @@ Enter this library.  It helps you run a series of functions without hanging Emac
 - automatic profiling: check the debug buffer to see how long each of your functions take
 
 - made with 200 lines of code (and uses the excellent named-timer.el, another 50 lines)
+=======
+- begins executing instantly, not, say, after a second of idle time, because sometimes a second is all the time you get, e.g. the time between when user switches to minibuffer and when user begins to type
+
+  - also zero delay in-between function calls
+
+- easy profiling: check the debug buffer to see how long each of your functions take
+
+- made with 120 lines of code
+>>>>>>> 8a7c2e9 (Bugfix)
 
 *Usage*
 
@@ -44,11 +54,20 @@ The API consists mainly of =(asyncloop-run)=, consult its docstring.  You may al
 
 For an example usage, find the use of "asyncloop-run" inside [[https://github.com/meedstrom/deianira/blob/master/deianira.el][deianira.el]], which gave birth to this library.
 
+<<<<<<< HEAD
 During development, you may learn a lot from setting =asyncloop-debug= to =t= and checking out the debug buffer associated with your loop.  The buffer name follows the pattern =*asyncloop-XXXXXXXXX*=, switch to it by typing something like =C-x b *asyncloop- TAB RET=.
 
 *Hygiene tips*
 
 How to write each mini-function: consider wrapping the bodies in =unwind-protect= or =while-no-input= or both.  It's also a good idea to write a general sanity check and call it the top of each function, and likewise an after-cancel cleanup after each call to =asyncloop-cancel= (if there's anything to clean up).  Of course this depends on your needs!
+=======
+*Hygiene tips*
+
+How to write each mini-function: consider
+- wrapping the bodies in =unwind-protect= or =while-no-input= or both.
+- It's also a good idea to write a general sanity check and call it the top of each function,
+- and likewise an after-cancel cleanup after each call to =asyncloop-cancel= (if you have anything else to clean up).
+>>>>>>> 8a7c2e9 (Bugfix)
 
 *Anti-wishlist (won't implement)*
 
