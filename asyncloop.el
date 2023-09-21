@@ -88,7 +88,8 @@ Expected format:
   "Stop asyncloop LOOP from executing more queued functions.
 Ensure the loop will restart fresh on the next call to
 `asyncloop-run'."
-  (setf (asyncloop-remainder loop) nil))
+  (setf (asyncloop-remainder loop) nil)
+  (asyncloop-log loop "Cancelled"))
 
 (defun asyncloop-chomp (loop)
   "Call the next function in the asyncloop LOOP.
@@ -97,11 +98,11 @@ Then schedule another invocation of `asyncloop-chomp'."
     (setf just-launched nil)
     (setf chomp-is-scheduled nil)
     (when remainder
-      (let ((func (pop remainder)))
+      (let ((user-given-function (pop remainder)))
         (condition-case err
             (progn
               ;; Do the real work
-              (asyncloop-clock-funcall loop func)
+              (asyncloop-clock-funcall loop user-given-function)
               ;; Schedule the next step
               (when remainder
                 (setf chomp-is-scheduled t)
@@ -124,11 +125,11 @@ Then schedule another invocation of `asyncloop-chomp'."
            ;; Don't ever skip a function just b/c it failed.  This line will
            ;; probably never affect anything, but if it does, it results in more
            ;; correctness.
-           (push func remainder)
+           (push user-given-function remainder)
            
            (when (eq (car err) 'error)
              (setf remainder nil)
-             (error "Function %S failed: %s" func (cdr err)))))))
+             (error "Function %S failed: %s" user-given-function (cdr err)))))))
 
     (when (null remainder)
       (let ((elapsed (float-time (time-since starttime))))
@@ -210,8 +211,14 @@ you can improve your debugging experience."
                        :funs funs
                        :debug-buffer
                        (when debug-buffer-name
+                         ;; TODO: in this buffer, let C-g additionally interrupt the running loop
                          (with-current-buffer (get-buffer-create debug-buffer-name)
                            (set (make-local-variable 'window-point-insertion-type) t)
+                           (use-local-map
+                            (let ((map (make-sparse-keymap)))
+                              (define-key map [remap keyboard-quit] #'asyncloop-keyboard-quit)
+                              (define-key map [remap doom/escape] #'asyncloop-keyboard-quit)
+                              (define-key map [remap abort-recursive-edit] #'asyncloop-keyboard-quit)))
                            (current-buffer)))))))))
     (asyncloop-with-slots (remainder chomp-is-scheduled last-idle-value just-launched starttime) loop
       ;; Ensure that being triggered by several concomitant hooks won't spam
@@ -240,6 +247,15 @@ you can improve your debugging experience."
           (setf starttime (current-time))
           (asyncloop-log loop "Loop started")
           (run-with-timer 0 nil #'asyncloop-chomp loop)))))))
+
+(defun asyncloop-keyboard-quit ()
+  "Wrapper for keyboard-quit that also interrupts the loop."
+  (interactive)
+  (require 'asyncloop-debug)
+  (asyncloop-reset-all)
+  (if (minibufferp)
+      (abort-recursive-edit)
+    (keyboard-quit)))
 
 (provide 'asyncloop)
 
