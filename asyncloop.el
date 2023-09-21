@@ -248,6 +248,9 @@ you can improve your debugging experience."
           (asyncloop-log loop "Loop started")
           (run-with-timer 0 nil #'asyncloop-chomp loop)))))))
 
+;; More descriptive name
+(defalias 'asyncloop-run-function-queue-maybe-resume #'asyncloop-run)
+
 (defun asyncloop-keyboard-quit ()
   "Wrapper for keyboard-quit that also interrupts the loop."
   (interactive)
