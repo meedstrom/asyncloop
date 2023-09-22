@@ -84,7 +84,7 @@ Expected format:
     ...)")
 
 (defun asyncloop-clock-funcall (loop fn)
-  "Run FN, then print elapsed time to LOOP\'s debug buffer."
+  "Run FN, then print elapsed time to the debug buffer of LOOP."
   (let ((fn-name (if (symbolp fn) fn "lambda"))
         (then (current-time))
         (result (funcall fn loop)))
@@ -142,16 +142,15 @@ If the previous loop with the same input seems to have been
 interrupted by an error and left in an incomplete state, first
 call the optional function ON-INTERRUPT-DISCOVERED, then resume
 the loop, picking up where it was left off.  To reiterate, this
-recovery won\'t happen at the moment the loop is interrupted, only
-the next time you execute `asyncloop-run' itself (which could be
-a long while or never, depending on what hook you put it on).
+recovery will not happen at the moment the loop is interrupted,
+only the next time you execute `asyncloop-run' itself (which could be a
+long while or never, depending on what hook you put it on).
 
-If you\'re having problems with insistent restarts, you could set
-ON-INTERRUPT-DISCOVERED to `asyncloop-cancel' to get some
-breathing room and watch the loop restart in full, which should
-help you debug what\'s going on.  The problem is likely
-appropriately solved with a sanity check at the start of most/all
-functions in FUNS.
+If you are having problems with insistent restarts, you could set
+ON-INTERRUPT-DISCOVERED to `asyncloop-cancel' to get some breathing room
+and watch the loop restart in full, which should help you debug
+what is going on.  The problem is likely appropriately solved
+with a sanity check at the start of most/all functions in FUNS.
 
 All the functions in FUNS, as well as the optional
 ON-INTERRUPT-DISCOVERED function, are passed one argument: the
@@ -165,14 +164,14 @@ object on to any of:
 
 To have a function in FUNS repeat itself until some condition is
 met (in the style of a while-loop), have it push itself onto the
-result of `asyncloop-remainder', effectively shoving itself back
-onto the front of the queue of things-to-execute:
+result of `asyncloop-remainder', effectively shoving itself back onto the
+front of the queue of things-to-execute:
 
   (unless some-condition
-    (push #\'this-function (asyncloop-remainder loop)))
+    (push #\\='this-function (asyncloop-remainder loop)))
 
 As always with while-loop patterns, take a moment to ensure that
-there\'s no way it will repeat forever.  If it\'s meant to
+there is no way it will repeat forever.  If it is meant to
 decrement a counter by `cl-decf' or consume a list one item at a
 time by `pop', consider doing that before anything else in the
 function body that could hit a bug.
