@@ -19,7 +19,7 @@
 
 ;; Author:  <meedstrom91@gmail.com>
 ;; Created: 2022-10-30
-;; Version: 0.3.2
+;; Version: 0.3.2-pre
 ;; Keywords: tools
 ;; Homepage: https://github.com/meedstrom/asyncloop
 ;; Package-Requires: ((emacs "28.1"))
