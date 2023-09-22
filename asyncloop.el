@@ -79,7 +79,7 @@ Arguments ARGS are the arguments for `format'."
 (defvar asyncloop-objects nil
   "Alist identifying unique asyncloop objects.
 Expected format:
-  \'((ID1 . OBJECT1)
+   ((ID1 . OBJECT1)
     (ID2 . OBJECT2)
     ...)")
 
@@ -142,14 +142,14 @@ If the previous loop with the same input seems to have been
 interrupted by an error and left in an incomplete state, first
 call the optional function ON-INTERRUPT-DISCOVERED, then resume
 the loop, picking up where it was left off.  To reiterate, this
-recovery won't happen at the moment the loop is interrupted, only
+recovery won\'t happen at the moment the loop is interrupted, only
 the next time you execute `asyncloop-run' itself (which could be
 a long while or never, depending on what hook you put it on).
 
-If you're having problems with insistent restarts, you could set
+If you\'re having problems with insistent restarts, you could set
 ON-INTERRUPT-DISCOVERED to `asyncloop-cancel' to get some
 breathing room and watch the loop restart in full, which should
-help you debug what's going on.  The problem is likely
+help you debug what\'s going on.  The problem is likely
 appropriately solved with a sanity check at the start of most/all
 functions in FUNS.
 
@@ -169,10 +169,10 @@ result of `asyncloop-remainder', effectively shoving itself back
 onto the front of the queue of things-to-execute:
 
   (unless some-condition
-    (push #'this-function (asyncloop-remainder loop)))
+    (push #\'this-function (asyncloop-remainder loop)))
 
 As always with while-loop patterns, take a moment to ensure that
-there's no way it will repeat forever.  If it's meant to
+there\'s no way it will repeat forever.  If it\'s meant to
 decrement a counter by `cl-decf' or consume a list one item at a
 time by `pop', consider doing that before anything else in the
 function body that could hit a bug.
