@@ -34,6 +34,13 @@
 
 (require 'cl-lib)
 
+(defvar asyncloop-debug-buffer-keymap
+  (let ((map (make-sparse-keymap)))
+    (define-key map [remap keyboard-quit] #'asyncloop-keyboard-quit)
+    (define-key map [remap abort-recursive-edit] #'asyncloop-keyboard-quit)
+    (define-key map [remap doom/escape] #'asyncloop-keyboard-quit)
+    map))
+
 (defun asyncloop-log (loop &rest args)
   "Log a message to the debug buffer associated with LOOP.
 Arguments ARGS are the arguments for `format'."
@@ -72,12 +79,12 @@ Arguments ARGS are the arguments for `format'."
 (defvar asyncloop-objects nil
   "Alist identifying unique asyncloop objects.
 Expected format:
-  '((ID1 . OBJECT1)
+  \'((ID1 . OBJECT1)
     (ID2 . OBJECT2)
     ...)")
 
 (defun asyncloop-clock-funcall (loop fn)
-  "Run FN, then print elapsed time to LOOP's debug buffer."
+  "Run FN, then print elapsed time to LOOP\'s debug buffer."
   (let ((fn-name (if (symbolp fn) fn "lambda"))
         (then (current-time))
         (result (funcall fn loop)))
@@ -238,13 +245,6 @@ Mainly for debugging."
     (cl-loop for cell in asyncloop-objects
              do (asyncloop-cancel (cdr cell))))
   (setq asyncloop-objects nil))
-
-(defvar asyncloop-debug-buffer-keymap
-  (let ((map (make-sparse-keymap)))
-    (define-key map [remap keyboard-quit] #'asyncloop-keyboard-quit)
-    (define-key map [remap abort-recursive-edit] #'asyncloop-keyboard-quit)
-    (define-key map [remap doom/escape] #'asyncloop-keyboard-quit)
-    map))
 
 (defun asyncloop-keyboard-quit ()
   "Wrapper for `keyboard-quit', that also interrupts the loop."

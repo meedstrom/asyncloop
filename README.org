@@ -22,7 +22,7 @@ Enter this library.  It helps you run a series of functions without hanging Emac
 
 *Features*
 
-- weeds out many edge cases; rolling your own timer-based non-blocking mechanism is laden with gotchas, [[https://edstrom.dev/posts/emacs-timer-gotchas][as I've found]]
+- weeds out many edge cases; rolling your own timer-based non-blocking mechanism is laden with gotchas, [[https://edstrom.dev/posts/Cds-WFI/emacs-timer-gotchas][as I've found]]
 
 - gets out of the way when the user is operating Emacs
 
@@ -46,12 +46,14 @@ For an example usage, find the use of "asyncloop-run" inside [[https://github.co
 
 *Hygiene tips*
 
-How to write each mini-function: consider
-- wrapping the bodies in =unwind-protect= or =while-no-input= or both.
-- It's also a good idea to write a general sanity check and call it the top of each function,
-- and likewise an after-cancel cleanup after each call to =asyncloop-cancel= (if you have anything else to clean up).
+What to include in each mini-function?  Consider
+
+- writing a general sanity check and calling it at the top of each function
+- writing a cleanup function and calling it each time you call =asyncloop-cancel=
+- wrapping the bodies in =unwind-protect= or =while-no-input= or both
 
 *Anti-wishlist (won't implement)*
 
 - The argument-passing style enabled in deferred.el among others, where you can use the return value from each function as input for the next function, sounds elegant but I've found it awful for debugging (perhaps I was missing some tooling).
-  - I recommend instead the "crude" approach of keeping state in external variables that you can inspect along the way, making it easy to figure out what work a broken chain did or didn't get done.  This approach also helps clarify the intent of your code because you have to name those variables.  The more stateful your program, the more this helps.
+  - I recommend instead the "crude" approach of keeping state in external variables that you can inspect along the way, making it easy to figure out what work a broken chain did or didn't get done.  This approach also helps clarify the intent of your code because you have to name those variables.
+# For code that need to manipulate Emacs state a lot or cross-reference many variables, like my [[https://github.com/meedstrom/deianira/blob/master/deianira.el][deianira.el]], it helped me a lot.
