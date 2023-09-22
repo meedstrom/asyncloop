@@ -66,14 +66,15 @@ Arguments ARGS are the arguments for `format'."
   (last-idle-value 0)
   (interrupt-counter 0))
 
-(defmacro asyncloop-with-slots (slots obj &rest body)
-  "Like EIEIO's `with-slots', but for our struct type."
+(defmacro asyncloop-with-slots (spec-list object &rest body)
+  "Like eieio's `with-slots', but for our struct type.
+Bind SPEC-LIST lexically to slot values in OBJECT, and execute BODY."
   (declare (indent 2))
   `(cl-symbol-macrolet
        ,(cl-loop
-         for slot in slots
+         for slot in spec-list
          collect `(,slot (,(intern (concat "asyncloop-" (symbol-name slot)))
-                          ,obj)))
+                          ,object)))
      ,@body))
 
 (defvar asyncloop-objects nil
