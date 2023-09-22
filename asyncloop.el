@@ -194,15 +194,9 @@ you can improve your debugging experience."
                        :funs funs
                        :debug-buffer
                        (when debug-buffer-name
-                         ;; TODO: in this buffer, let C-g additionally interrupt the running loop
                          (with-current-buffer (get-buffer-create debug-buffer-name)
                            (set (make-local-variable 'window-point-insertion-type) t)
-                           (use-local-map
-                            (let ((map (make-sparse-keymap)))
-                              (define-key map [remap keyboard-quit] #'asyncloop-keyboard-quit)
-                              (define-key map [remap doom/escape] #'asyncloop-keyboard-quit)
-                              (define-key map [remap abort-recursive-edit] #'asyncloop-keyboard-quit)
-                              map))
+                           (use-local-map asyncloop-debug-buffer-keymap)
                            (current-buffer)))))))))
     (asyncloop-with-slots (remainder chomp-is-scheduled last-idle-value just-launched starttime) loop
       ;; Ensure that being triggered by several concomitant hooks won't spam
@@ -219,7 +213,8 @@ you can improve your debugging experience."
             (asyncloop-clock-funcall loop on-interrupt-discovered))
           (if remainder
               (progn
-                (asyncloop-log loop "Loop had been interrupted, resuming.  Functions left to run: %S" remainder)
+                (asyncloop-log loop
+                  "Loop had been interrupted, resuming.  Functions left to run: %S" remainder)
                 (setf last-idle-value 0)
                 (run-with-timer 0 nil #'asyncloop-chomp loop))
             (asyncloop-log loop "Cancelled by ON-INTERRUPT-DISCOVERED")))
@@ -233,13 +228,27 @@ you can improve your debugging experience."
           (run-with-timer 0 nil #'asyncloop-chomp loop)))))))
 
 ;; More descriptive name
-(defalias 'asyncloop-run-function-queue-maybe-resume #'asyncloop-run)
 (defalias 'asyncloop-run-function-queue #'asyncloop-run)
 
-(defun asyncloop-keyboard-quit ()
-  "Wrapper for keyboard-quit that also interrupts the loop."
+(defun asyncloop-reset-all ()
+  "Cancel all asyncloops and wipe `asyncloop-objects'.
+Mainly for debugging."
   (interactive)
-  (require 'asyncloop-debug)
+  (ignore-errors
+    (cl-loop for cell in asyncloop-objects
+             do (asyncloop-cancel (cdr cell))))
+  (setq asyncloop-objects nil))
+
+(defvar asyncloop-debug-buffer-keymap
+  (let ((map (make-sparse-keymap)))
+    (define-key map [remap keyboard-quit] #'asyncloop-keyboard-quit)
+    (define-key map [remap abort-recursive-edit] #'asyncloop-keyboard-quit)
+    (define-key map [remap doom/escape] #'asyncloop-keyboard-quit)
+    map))
+
+(defun asyncloop-keyboard-quit ()
+  "Wrapper for `keyboard-quit', that also interrupts the loop."
+  (interactive)
   (asyncloop-reset-all)
   (if (minibufferp)
       (abort-recursive-edit)
