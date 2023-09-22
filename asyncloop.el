@@ -121,7 +121,7 @@ Then schedule another invocation of `asyncloop-chomp'."
           ;; TODO: Is behavior sane on non-error signal?
           (t
            (setf chomp-is-scheduled nil)
-           (asyncloop-log loop "Asyncloop interrupted because: %s" err)
+           (asyncloop-log loop "Loop interrupted because: %s" err)
            ;; Don't ever skip a function just b/c it failed.  This line will
            ;; probably never affect anything, but if it does, it results in more
            ;; correctness.
@@ -218,7 +218,8 @@ you can improve your debugging experience."
                             (let ((map (make-sparse-keymap)))
                               (define-key map [remap keyboard-quit] #'asyncloop-keyboard-quit)
                               (define-key map [remap doom/escape] #'asyncloop-keyboard-quit)
-                              (define-key map [remap abort-recursive-edit] #'asyncloop-keyboard-quit)))
+                              (define-key map [remap abort-recursive-edit] #'asyncloop-keyboard-quit)
+                              map))
                            (current-buffer)))))))))
     (asyncloop-with-slots (remainder chomp-is-scheduled last-idle-value just-launched starttime) loop
       ;; Ensure that being triggered by several concomitant hooks won't spam
@@ -235,7 +236,7 @@ you can improve your debugging experience."
             (asyncloop-clock-funcall loop on-interrupt-discovered))
           (if remainder
               (progn
-                (asyncloop-log loop "Loop had been interrupted, resuming.  Left to run: %S" remainder)
+                (asyncloop-log loop "Loop had been interrupted, resuming.  Functions left to run: %S" remainder)
                 (setf last-idle-value 0)
                 (run-with-timer 0 nil #'asyncloop-chomp loop))
             (asyncloop-log loop "Cancelled by ON-INTERRUPT-DISCOVERED")))
@@ -250,6 +251,7 @@ you can improve your debugging experience."
 
 ;; More descriptive name
 (defalias 'asyncloop-run-function-queue-maybe-resume #'asyncloop-run)
+(defalias 'asyncloop-run-function-queue #'asyncloop-run)
 
 (defun asyncloop-keyboard-quit ()
   "Wrapper for keyboard-quit that also interrupts the loop."
