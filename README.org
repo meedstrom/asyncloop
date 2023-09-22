@@ -32,7 +32,7 @@ Enter this library.  It helps you run a series of functions without hanging Emac
 
 - easy profiling: check the debug buffer to see how long each of your functions take
 
-- made with 120 lines of code
+- made with 150 lines of code
 
 *Usage*
 
