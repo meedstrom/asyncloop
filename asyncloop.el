@@ -99,38 +99,21 @@ Then schedule another invocation of `asyncloop-chomp'."
     (setf chomp-is-scheduled nil)
     (when remainder
       (let ((user-given-function (pop remainder)))
-        (condition-case err
-            (progn
-              ;; Do the real work
-              (asyncloop-clock-funcall loop user-given-function)
-              ;; Schedule the next step
-              (when remainder
-                (setf chomp-is-scheduled t)
-                (let ((idled-time (or (current-idle-time) 0)))
-                    (if (time-less-p last-idle-value idled-time)
-                        ;; User hasn't done any I/O since last chomp, so proceed
-                        ;; immediately to the next call.
-                        (run-with-timer 0 nil #'asyncloop-chomp loop)
-                      ;; User just did I/O, so free a moment for Emacs to
-                      ;; respond to it.  Because it's on an idle timer, this
-                      ;; moment may be extended indefinitely.
-                      (run-with-idle-timer 1.0 nil #'asyncloop-chomp loop))
-                    (setf last-idle-value idled-time))))
-
-          ;; TODO: an interrupt-counter for automatic self-disabling
-          ;; TODO: Is behavior sane on non-error signal?
-          (t
-           (setf chomp-is-scheduled nil)
-           (asyncloop-log loop "Loop interrupted because: %s" err)
-           ;; Don't ever skip a function just b/c it failed.  This line will
-           ;; probably never affect anything, but if it does, it results in more
-           ;; correctness.
-           (push user-given-function remainder)
-           
-           (when (eq (car err) 'error)
-             (setf remainder nil)
-             (error "Function %S failed: %s" user-given-function (cdr err)))))))
-
+        ;; Do the real work
+        (asyncloop-clock-funcall loop user-given-function)
+        ;; Schedule the next step
+        (when remainder
+          (setf chomp-is-scheduled t)
+          (let ((idled-time (or (current-idle-time) 0)))
+            (if (time-less-p last-idle-value idled-time)
+                ;; User hasn't done any I/O since last chomp, so proceed
+                ;; immediately to the next call.
+                (run-with-timer 0 nil #'asyncloop-chomp loop)
+              ;; User just did I/O, so free a moment for Emacs to
+              ;; respond to it.  Because it's on an idle timer, this
+              ;; moment may be extended indefinitely.
+              (run-with-idle-timer 1.0 nil #'asyncloop-chomp loop))
+            (setf last-idle-value idled-time)))))
     (when (null remainder)
       (let ((elapsed (float-time (time-since starttime))))
         (asyncloop-log loop "Loop finished, total wall-time %.2fs" elapsed)))))
