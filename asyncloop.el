@@ -19,7 +19,7 @@
 
 ;; Author:  <meedstrom91@gmail.com>
 ;; Created: 2022-10-30
-;; Version: 0.3.3
+;; Version: 0.3.4-pre
 ;; Keywords: tools
 ;; Homepage: https://github.com/meedstrom/asyncloop
 ;; Package-Requires: ((emacs "28.1"))
@@ -184,30 +184,30 @@ debug buffer prints the return values, so by returning something
 interesting (I suggest a short string constructed by `format'),
 you can improve your debugging experience."
   (declare (indent defun))
+  (cl-assert funs)
+  ;; TODO: why this assertion errors in normal use?
+  ;; (dolist (fun funs)
+  ;;   (cl-assert (functionp fun)))
+
   ;; Name it as a deterministic hash of the input, ensuring that
   ;; next call with the same input can recognize that it was
   ;; already called.
   (let* ((id (abs (sxhash (list funs on-interrupt-discovered debug-buffer-name))))
          (loop
           (or (alist-get id asyncloop-objects)
-              (progn
-                (cl-assert funs)
-                ;; causes error for some reason
-                ;; (dolist (fun funs)
-                ;;   (cl-assert (functionp fun)))
-                (setf (alist-get id asyncloop-objects)
-                      (asyncloop-create
-                       :funs funs
-                       :debug-buffer
-                       (when debug-buffer-name
-                         (with-current-buffer (get-buffer-create debug-buffer-name)
-                           (set (make-local-variable 'window-point-insertion-type) t)
-                           (use-local-map asyncloop-debug-buffer-keymap)
-                           (current-buffer)))))))))
+              (setf (alist-get id asyncloop-objects)
+                    (asyncloop-create
+                     :funs funs
+                     :debug-buffer
+                     (when debug-buffer-name
+                       (with-current-buffer (get-buffer-create debug-buffer-name)
+                         (set (make-local-variable 'window-point-insertion-type) t)
+                         (use-local-map asyncloop-debug-buffer-keymap)
+                         (current-buffer))))))))
     (asyncloop-with-slots (remainder chomp-is-scheduled last-idle-value just-launched starttime) loop
-      ;; Ensure that being triggered by several concomitant hooks won't spam
-      ;; the debug buffer, or worse, start multiple loops (somehow happens
-      ;; -- maybe if a timer is at 0 seconds, it can't be cancelled?).
+      ;; Ensure that being triggered by several concomitant hooks won't spam the
+      ;; debug buffer, or worse, start multiple loops (this somehow happened in
+      ;; the past -- maybe if a timer is at 0 seconds, it can't be cancelled?).
       (unless just-launched
         (setf just-launched t)
         (cond
