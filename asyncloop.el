@@ -19,16 +19,15 @@
 
 ;; Author:  <meedstrom91@gmail.com>
 ;; Created: 2022-10-30
-;; Version: 0.3.2-pre
+;; Version: 0.3.3-pre
 ;; Keywords: tools
 ;; Homepage: https://github.com/meedstrom/asyncloop
 ;; Package-Requires: ((emacs "28.1"))
 
 ;;; Commentary:
 
-;; Use `asyncloop-run' to call a series of functions without hanging Emacs.
-
-;; TODO: orderless-initialisms to ignore ^dei-
+;; Use `asyncloop-run-function-queue' to call a series of functions without
+;; hanging Emacs.
 
 ;;; Code:
 
