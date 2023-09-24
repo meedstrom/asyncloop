@@ -19,7 +19,7 @@
 
 ;; Author:  <meedstrom91@gmail.com>
 ;; Created: 2022-10-30
-;; Version: 0.3.3-pre
+;; Version: 0.3.3
 ;; Keywords: tools
 ;; Homepage: https://github.com/meedstrom/asyncloop
 ;; Package-Requires: ((emacs "28.1"))
@@ -234,6 +234,7 @@ you can improve your debugging experience."
           (run-with-timer 0 nil #'asyncloop-chomp loop)))))))
 
 ;; More descriptive name
+;;;###autoload
 (defalias 'asyncloop-run-function-queue #'asyncloop-run)
 
 (defun asyncloop-reset-all ()
