@@ -25,7 +25,7 @@ Enter this library.  It helps you run a series of functions without hanging Emac
 
 *Features*
 
-- weeds out many edge cases; rolling your own timer-based non-blocking mechanism is laden with gotchas, [[https://edstrom.dev/posts/Cds-WFI/emacs-timer-gotchas][as I've found]]
+- weeds out many edge cases; rolling your own timer-based non-blocking mechanism is laden with gotchas, [[https://edstrom.dev/emacs-timer-gotchas][as I've found]]
 
 - gets out of the way when the user is operating Emacs
 
