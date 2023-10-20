@@ -44,15 +44,15 @@
   "Log a message to the debug buffer associated with LOOP.
 Arguments ARGS are the arguments for `format'."
   (declare (indent 1))
-  (let ((buf (asyncloop-debug-buffer loop)))
+  (let ((buf (asyncloop-debug-buffer loop))
+        (text (apply #'format args)))
     (when (and buf (buffer-live-p buf))
       (with-current-buffer buf
-        (let ((text (apply #'format args)))
-          (goto-char (point-max))
-          (insert (format-time-string "%T: ") text)
-          (newline)
-          ;; Allow the convenient sexp (error "%s" (asyncloop-log loop "msg"))
-          text)))))
+        (goto-char (point-max))
+        (insert (format-time-string "%T: ") text)
+        (newline)))
+    ;; Allow the convenient sexp (warn "%s" (asyncloop-log loop "msg"))
+    text))
 
 (cl-defstruct (asyncloop (:constructor asyncloop-create)
                          (:copier nil))
