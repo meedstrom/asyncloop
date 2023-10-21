@@ -50,7 +50,13 @@ Arguments ARGS are the arguments for `format'."
       (with-current-buffer buf
         (goto-char (point-max))
         (insert (format-time-string "%T: ") text)
-        (newline)))
+        (newline))
+      ;; A psychological experiment.  Some emacsen feel slow because they don't
+      ;; redisplay the buffer on every insertion, so they batch updates in
+      ;; chunks of 10-20 lines with significant lag in between.  The underlying
+      ;; work is actually smooth, but it may not seem so.  Help DX (dev
+      ;; experience).
+      (redisplay))
     ;; Allow the convenient sexp (warn "%s" (asyncloop-log loop "msg"))
     text))
 
