@@ -123,7 +123,7 @@ Then schedule another invocation of `asyncloop-chomp'."
             (setf last-idle-value idled-time)))))
     (when (null remainder)
       (let ((elapsed (float-time (time-since starttime))))
-        (asyncloop-log loop "Loop finished, total wall-time %.2fs" elapsed)))))
+        (asyncloop-log loop "Loop ended, total wall-time %.2fs" elapsed)))))
 
 ;;;###autoload
 (cl-defun asyncloop-run (funs &key on-interrupt-discovered debug-buffer-name)
