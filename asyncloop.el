@@ -51,11 +51,10 @@ Arguments ARGS are the arguments for `format'."
         (goto-char (point-max))
         (insert (format-time-string "%T: ") text)
         (newline))
-      ;; A psychological experiment.  Some emacsen feel slow because they don't
-      ;; redisplay the buffer on every insertion, so they batch updates in
-      ;; chunks of 10-20 lines with significant lag in between.  The underlying
-      ;; work is actually smooth, but it may not seem so.  Help DX (dev
-      ;; experience).
+      ;; A psychological experiment to help DX.  Some emacsen feel slow because
+      ;; they don't redisplay the buffer on every insertion, so they batch
+      ;; updates in chunks of 10-20 lines with significant lag in between.  The
+      ;; underlying work is actually smooth, but it may not seem so.
       (redisplay))
     ;; Allow the convenient sexp (warn "%s" (asyncloop-log loop "msg"))
     text))
@@ -121,6 +120,11 @@ Then schedule another invocation of `asyncloop-chomp'."
             (if (time-less-p last-idle-value idled-time)
                 ;; User hasn't done any I/O since last chomp, so proceed
                 ;; immediately to the next call.
+                ;; Use timer anyway instead of direct call, to avoid
+                ;; exceeding the call stack.
+                ;; TODO: Profile the performance of direct calls.  Maybe it's
+                ;; worth temporarily increasing max-lisp-eval-depth, and
+                ;; nesting 100 calls between every use of timer.
                 (run-with-timer 0 nil #'asyncloop-chomp loop)
               ;; User just did I/O, so free a moment for Emacs to
               ;; respond to it.  Because it's on an idle timer, this
