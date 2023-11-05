@@ -10,6 +10,7 @@
 
 [[https://www.gnu.org/licenses/gpl-3.0][https://img.shields.io/badge/License-GPL%20v3-blue.svg]]
 [[https://melpa.org/#/asyncloop][file:https://melpa.org/packages/asyncloop-badge.svg]]
+[[https://stable.melpa.org/#/asyncloop][file:https://stable.melpa.org/packages/asyncloop-badge.svg]]
 
 You have a big slow piece of Emacs Lisp, and it blocks Emacs for a painful few seconds.  You rack your brain: how to fix it?  You've already tuned the performance to your best ability.  You've ruled out async.el or shelling out, because your code needs to manipulate the current Emacs state.  So you go look up the libraries [[https://github.com/kiwanami/emacs-deferred/][deferred.el]] (inspired by jsdeferred) or [[https://github.com/skeeto/emacs-aio][emacs-aio]] (inspired by asyncio)...
 
