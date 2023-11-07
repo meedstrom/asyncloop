@@ -26,12 +26,12 @@
 
 ;;; Commentary:
 
-;; Use `asyncloop-run-function-queue' to call a series of functions without
-;; hanging Emacs.
+;; Use `asyncloop-run' to call a series of functions without hanging Emacs.
 
 ;;; Code:
 
 (require 'cl-lib)
+(require 'named-timer)
 
 (defvar asyncloop-debug-buffer-keymap
   (let ((map (make-sparse-keymap)))
@@ -67,7 +67,6 @@ Arguments ARGS are the arguments for `format'."
   (chomp-is-scheduled nil)
   (just-launched nil)
   (debug-buffer nil)
-  (last-idle-value 0)
   (interrupt-counter 0))
 
 (defmacro asyncloop-with-slots (spec-list object &rest body)
@@ -103,31 +102,49 @@ Ensure the loop will restart fresh on the next call to
   (setf (asyncloop-remainder loop) nil)
   (asyncloop-log loop "Loop cancelled"))
 
-(defun asyncloop-chomp-start (loop)
-  "Call the next function in the asyncloop LOOP.
-Then schedule another invocation of `asyncloop-chomp-start'."
-  (asyncloop-with-slots (remainder chomp-is-scheduled just-launched starttime) loop
-    (setf just-launched nil)
-    (setf chomp-is-scheduled nil)
-    ;; Do the real work
-    (asyncloop-clock-funcall loop (pop remainder))
+(defun asyncloop-chomp (loop)
+  "For wrapping in `while-no-input'."
+  (asyncloop-with-slots (remainder starttime) loop
+    ;; REVIEW: is it saner to leave remainder unpopped during the funcall, or
+    ;; would I rather pop and add it back after an error, with a condition-case?
+    ;; I don't like using condition-case so I'll try it this way for now.
+    (let ((fun (car remainder)))
+      (asyncloop-clock-funcall loop fun)
+      (pop remainder))
     (if (null remainder)
         (let ((elapsed (float-time (time-since starttime))))
           (asyncloop-log loop "Loop ended, total wall-time %.2fs" elapsed))
-      ;; Schedule the next step
+      ;; User hasn't done any I/O since last chomp, so proceed immediately to
+      ;; the next call.  Every 20 calls, prune the call stack to minimize the
+      ;; risk of hitting `max-lisp-eval-depth'.
+      (if (> 20 (cl-incf asyncloop--recursion-ctr))
+          (asyncloop-chomp loop)
+        (named-timer-run 'foo .01 nil #'asyncloop-resume-1 loop))))
+  nil)
+
+(defun asyncloop-resume (loop)
+  "Set asyncloop LOOP to resume when Emacs has a moment.
+In other words, actually places `asyncloop-resume-1' on a short timer,
+which has the effect of deferring it until Emacs finishes
+executing the current call stack."
+  (named-timer-run 'foo .01 nil #'asyncloop-resume-1 loop))
+
+(defun asyncloop-resume-1 (loop)
+  "Resume executing asyncloop LOOP.
+When user input arrives, schedule another invocation of
+`asyncloop-resume-1' on an idle timer."
+  (asyncloop-with-slots (just-launched paused chomp-is-scheduled) loop
+    (setf just-launched nil)
+    (setf paused nil)
+    (setf chomp-is-scheduled nil)
+    (setq asyncloop--recursion-ctr 0)
+    ;; (with-local-quit
+    (when (while-no-input (asyncloop-chomp loop))
+      ;; User just did I/O, so free a moment for Emacs to
+      ;; respond to it.  Because it's on an idle timer, this
+      ;; moment may be extended indefinitely.
       (setf chomp-is-scheduled t)
-      (if (input-pending-p)
-          ;; User just did I/O, so free a moment for Emacs to
-          ;; respond to it.  Because it's on an idle timer, this
-          ;; moment may be extended indefinitely.
-          (run-with-idle-timer 1.0 nil #'asyncloop-chomp-start loop)
-        ;; User hasn't done any I/O since last chomp, so proceed immediately to
-        ;; the next call.  Every 20 calls, prune the call stack to minimize risk
-        ;; of hitting `max-lisp-eval-depth'.
-        (if (> 20 (cl-incf asyncloop--recursion-ctr))
-            (asyncloop-chomp-start loop)
-          (setq asyncloop--recursion-ctr 0)
-          (run-with-timer 0 nil #'asyncloop-chomp-start loop))))))
+      (named-timer-idle-run 'foo 1.0 nil #'asyncloop-resume-1 loop))))
 
 (defvar asyncloop--recursion-ctr 0)
 
@@ -165,6 +182,8 @@ functions inspect and manipulate the running loop by passing the
 object on to any of:
 
 - `asyncloop-cancel'
+- `asyncloop-resume'
+- `asyncloop-pause'
 - `asyncloop-remainder'
 - `asyncloop-log'
 
@@ -210,7 +229,7 @@ you can improve your debugging experience."
                          (set (make-local-variable 'window-point-insertion-type) t)
                          (use-local-map asyncloop-debug-buffer-keymap)
                          (current-buffer))))))))
-    (asyncloop-with-slots (remainder chomp-is-scheduled last-idle-value just-launched starttime) loop
+    (asyncloop-with-slots (remainder chomp-is-scheduled just-launched starttime) loop
       ;; Ensure that being triggered by several concomitant hooks won't spam the
       ;; debug buffer, or worse, start multiple loops (this somehow happened in
       ;; the past -- maybe if a timer is at 0 seconds, it can't be cancelled?).
@@ -228,16 +247,14 @@ you can improve your debugging experience."
             (asyncloop-log loop
               "Loop had been interrupted, resuming.  Functions left to run: %S"
               remainder)
-            (setf last-idle-value 0)
-            (run-with-timer 0 nil #'asyncloop-chomp-start loop)))
+            (named-timer-run 'foo .01 nil #'asyncloop-resume-1 loop)))
 
          (t
           ;; Launch anew the full loop
           (setf remainder funs)
-          (setf last-idle-value 0)
           (setf starttime (current-time))
           (asyncloop-log loop "Loop started")
-          (run-with-timer 0 nil #'asyncloop-chomp-start loop)))))
+          (named-timer-run 'foo .01 nil #'asyncloop-resume-1 loop)))))
     loop))
 
 ;; More descriptive name
