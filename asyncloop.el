@@ -101,7 +101,7 @@ Expected format:
 Ensure the loop will restart fresh on the next call to
 `asyncloop-run'."
   (setf (asyncloop-remainder loop) nil)
-  (asyncloop-log loop "Cancelled"))
+  (asyncloop-log loop "Loop cancelled"))
 
 (defun asyncloop-chomp (loop)
   "Call the next function in the asyncloop LOOP.
@@ -109,31 +109,31 @@ Then schedule another invocation of `asyncloop-chomp'."
   (asyncloop-with-slots (remainder chomp-is-scheduled last-idle-value just-launched starttime) loop
     (setf just-launched nil)
     (setf chomp-is-scheduled nil)
-    (when remainder
-      (let ((user-given-function (pop remainder)))
-        ;; Do the real work
-        (asyncloop-clock-funcall loop user-given-function)
-        ;; Schedule the next step
-        (when remainder
-          (setf chomp-is-scheduled t)
-          (let ((idled-time (or (current-idle-time) 0)))
-            (if (time-less-p last-idle-value idled-time)
-                ;; User hasn't done any I/O since last chomp, so proceed
-                ;; immediately to the next call.
-                ;; Use timer anyway instead of direct call, to avoid
-                ;; exceeding the call stack.
-                ;; TODO: Profile the performance of direct calls.  Maybe it's
-                ;; worth temporarily increasing max-lisp-eval-depth, and
-                ;; nesting 100 calls between every use of timer.
-                (run-with-timer 0 nil #'asyncloop-chomp loop)
-              ;; User just did I/O, so free a moment for Emacs to
-              ;; respond to it.  Because it's on an idle timer, this
-              ;; moment may be extended indefinitely.
-              (run-with-idle-timer 1.0 nil #'asyncloop-chomp loop))
-            (setf last-idle-value idled-time)))))
-    (when (null remainder)
-      (let ((elapsed (float-time (time-since starttime))))
-        (asyncloop-log loop "Loop ended, total wall-time %.2fs" elapsed)))))
+    ;; Do the real work
+    (asyncloop-clock-funcall loop (pop remainder))
+    (if (null remainder)
+        (let ((elapsed (float-time (time-since starttime))))
+          (asyncloop-log loop "Loop ended, total wall-time %.2fs" elapsed))
+      ;; Schedule the next step
+      (setf chomp-is-scheduled t)
+      (if (time-less-p last-idle-value
+                       (setf last-idle-value (or (current-idle-time) 0)))
+          ;; User hasn't done any I/O since last chomp, so proceed
+          ;; immediately to the next call.
+          ;;
+          ;; Here we could just recurse (i.e. call `asyncloop-chomp' directly), but
+          ;; that makes Emacs unresponsive to user input (I surmise that input
+          ;; does not zero out the value returned by `current-idle-time' until
+          ;; the top function returns).  The zero-timer also does us the
+          ;; service of pruning the call stack so that that thousands of calls
+          ;; won't run up against `max-lisp-eval-depth'.  Unfortunately, the
+          ;; timer seems to add a slight overhead (or so I felt in my limited
+          ;; testing), but you win some, you lose some.
+          (run-with-timer 0 nil #'asyncloop-chomp loop)
+        ;; User just did I/O, so free a moment for Emacs to
+        ;; respond to it.  Because it's on an idle timer, this
+        ;; moment may be extended indefinitely.
+        (run-with-idle-timer 1.0 nil #'asyncloop-chomp loop)))))
 
 ;;;###autoload
 (cl-defun asyncloop-run (funs &key on-interrupt-discovered debug-buffer-name)
@@ -227,13 +227,13 @@ you can improve your debugging experience."
          ((and remainder (not (equal remainder funs)))
           (when on-interrupt-discovered
             (asyncloop-clock-funcall loop on-interrupt-discovered))
-          (if remainder
-              (progn
-                (asyncloop-log loop
-                  "Loop had been interrupted, resuming.  Functions left to run: %S" remainder)
-                (setf last-idle-value 0)
-                (run-with-timer 0 nil #'asyncloop-chomp loop))
-            (asyncloop-log loop "Cancelled by ON-INTERRUPT-DISCOVERED")))
+          (if (null remainder)
+              (asyncloop-log loop "Cancelled by ON-INTERRUPT-DISCOVERED")
+            (asyncloop-log loop
+              "Loop had been interrupted, resuming.  Functions left to run: %S"
+              remainder)
+            (setf last-idle-value 0)
+            (run-with-timer 0 nil #'asyncloop-chomp loop)))
 
          (t
           ;; Launch anew the full loop
@@ -241,7 +241,8 @@ you can improve your debugging experience."
           (setf last-idle-value 0)
           (setf starttime (current-time))
           (asyncloop-log loop "Loop started")
-          (run-with-timer 0 nil #'asyncloop-chomp loop)))))))
+          (run-with-timer 0 nil #'asyncloop-chomp loop)))))
+    loop))
 
 ;; More descriptive name
 ;;;###autoload
