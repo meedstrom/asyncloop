@@ -103,10 +103,10 @@ Ensure the loop will restart fresh on the next call to
   (setf (asyncloop-remainder loop) nil)
   (asyncloop-log loop "Loop cancelled"))
 
-(defun asyncloop-chomp (loop)
+(defun asyncloop-chomp-start (loop)
   "Call the next function in the asyncloop LOOP.
-Then schedule another invocation of `asyncloop-chomp'."
-  (asyncloop-with-slots (remainder chomp-is-scheduled last-idle-value just-launched starttime) loop
+Then schedule another invocation of `asyncloop-chomp-start'."
+  (asyncloop-with-slots (remainder chomp-is-scheduled just-launched starttime) loop
     (setf just-launched nil)
     (setf chomp-is-scheduled nil)
     ;; Do the real work
@@ -116,24 +116,20 @@ Then schedule another invocation of `asyncloop-chomp'."
           (asyncloop-log loop "Loop ended, total wall-time %.2fs" elapsed))
       ;; Schedule the next step
       (setf chomp-is-scheduled t)
-      (if (time-less-p last-idle-value
-                       (setf last-idle-value (or (current-idle-time) 0)))
-          ;; User hasn't done any I/O since last chomp, so proceed
-          ;; immediately to the next call.
-          ;;
-          ;; Here we could just recurse (i.e. call `asyncloop-chomp' directly), but
-          ;; that makes Emacs unresponsive to user input (I surmise that input
-          ;; does not zero out the value returned by `current-idle-time' until
-          ;; the top function returns).  The zero-timer also does us the
-          ;; service of pruning the call stack so that that thousands of calls
-          ;; won't run up against `max-lisp-eval-depth'.  Unfortunately, the
-          ;; timer seems to add a slight overhead (or so I felt in my limited
-          ;; testing), but you win some, you lose some.
-          (run-with-timer 0 nil #'asyncloop-chomp loop)
-        ;; User just did I/O, so free a moment for Emacs to
-        ;; respond to it.  Because it's on an idle timer, this
-        ;; moment may be extended indefinitely.
-        (run-with-idle-timer 1.0 nil #'asyncloop-chomp loop)))))
+      (if (input-pending-p)
+          ;; User just did I/O, so free a moment for Emacs to
+          ;; respond to it.  Because it's on an idle timer, this
+          ;; moment may be extended indefinitely.
+          (run-with-idle-timer 1.0 nil #'asyncloop-chomp-start loop)
+        ;; User hasn't done any I/O since last chomp, so proceed immediately to
+        ;; the next call.  Every 20 calls, prune the call stack to minimize risk
+        ;; of hitting `max-lisp-eval-depth'.
+        (if (> 20 (cl-incf asyncloop--recursion-ctr))
+            (asyncloop-chomp-start loop)
+          (setq asyncloop--recursion-ctr 0)
+          (run-with-timer 0 nil #'asyncloop-chomp-start loop))))))
+
+(defvar asyncloop--recursion-ctr 0)
 
 ;;;###autoload
 (cl-defun asyncloop-run (funs &key on-interrupt-discovered debug-buffer-name)
@@ -233,7 +229,7 @@ you can improve your debugging experience."
               "Loop had been interrupted, resuming.  Functions left to run: %S"
               remainder)
             (setf last-idle-value 0)
-            (run-with-timer 0 nil #'asyncloop-chomp loop)))
+            (run-with-timer 0 nil #'asyncloop-chomp-start loop)))
 
          (t
           ;; Launch anew the full loop
@@ -241,7 +237,7 @@ you can improve your debugging experience."
           (setf last-idle-value 0)
           (setf starttime (current-time))
           (asyncloop-log loop "Loop started")
-          (run-with-timer 0 nil #'asyncloop-chomp loop)))))
+          (run-with-timer 0 nil #'asyncloop-chomp-start loop)))))
     loop))
 
 ;; More descriptive name
