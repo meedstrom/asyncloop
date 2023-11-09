@@ -1,0 +1,11 @@
+Considered various other names for the package:
+
+- function-queue
+- queue
+- chain
+- timer-chain
+- ... others, forgotten
+
+I find the name "function-queue" very descriptive, but the problem is that it doesn't sound like a namespace!  The package ships a function named `function-queue-apply-transaction' which sounds like it does some sort of transaction of function queues?  And that's misleading.
+
+Emacs core can use namespaces like that, MELPA packages shouldn't.  Thus, I dub thee "asyncloop".
