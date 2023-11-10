@@ -12,6 +12,13 @@
 [[https://melpa.org/#/asyncloop][file:https://melpa.org/packages/asyncloop-badge.svg]]
 [[https://stable.melpa.org/#/asyncloop][file:https://stable.melpa.org/packages/asyncloop-badge.svg]]
 
+* News
+- 2023-11-10 (Version 0.4)
+  - Eliminate 90%+ of performance overhead
+  - Introduce =:immediate-break-on-input=, for zero-latency response to user activity
+  - Introduce =asyncloop-pause= and =asyncloop-resume=
+
+* Intro
 You have a big slow piece of Emacs Lisp, and it blocks Emacs for a painful few seconds.  You rack your brain: how to fix it?  You've already tuned the performance to your best ability.  You've ruled out async.el or shelling out, because your code needs to manipulate the current Emacs state.  So you go look up the libraries [[https://github.com/kiwanami/emacs-deferred/][deferred.el]] (inspired by jsdeferred) or [[https://github.com/skeeto/emacs-aio][emacs-aio]] (inspired by asyncio)...
 
 But wait!  These concepts can be way too sophisticated for your use-case, as they were for mine.  They take time to understand well enough to debug code that uses them.  You need to learn computer-science terms like "iteration deferred object", "errorback" and "callback" before you can make heads or tails of what's going on.  At some point you're questioning the meaning of a function call and you realize you've spent 20 hours implementing something that ought've taken 1 hour.
@@ -32,11 +39,11 @@ Enter this library.  It helps you run a series of functions without hanging Emac
 
 - begins executing instantly, not, say, after a second of idle time, because sometimes a second is all the time you get, e.g. the time between when user switches to minibuffer and when user begins to type
 
-  - also zero delay in-between function calls
+- zero delay in-between function calls
 
 - easy profiling: check the debug buffer to see how long each of your functions take
 
-- made with 150 lines of code
+- made with 200 lines of code
 
 *Usage*
 
@@ -44,6 +51,8 @@ The API consists mainly of =(asyncloop-run)=, consult its docstring.  You may al
 
 - =(asyncloop-remainder LOOP)=: access state of the running loop, so you can modify it with =setf=, =push=, =delq= etc.
 - =(asyncloop-cancel LOOP)=: cancel the running loop
+- =(asyncloop-pause LOOP)=: pause the running loop
+- =(asyncloop-resume LOOP)=: resume the loop
 - =(asyncloop-log LOOP &rest ARGS)=: send message to the debug buffer.  Note that it's usually more elegant for each mini-function to just pass an informative return value, as that is automatically printed in the debug buffer.
 
 For an example usage, find the use of "asyncloop-run" inside [[https://github.com/meedstrom/deianira/blob/master/deianira.el][deianira.el]], which gave birth to this library.
@@ -54,13 +63,11 @@ What to include in each mini-function?  Consider
 
 - writing a general sanity check and calling it at the top of each function
 - writing a cleanup function and calling it each time you call =asyncloop-cancel=
-- wrapping the bodies in =unwind-protect= or =while-no-input= or both
 
 *Anti-wishlist (won't implement)*
 
 - The argument-passing style enabled in deferred.el among others, where you can use the return value from each function as input for the next function, sounds elegant but I've found it awful for debugging (perhaps I was missing some tooling).
   - I recommend instead the "crude" approach of keeping state in external variables that you can inspect along the way, making it easy to figure out what work a broken chain did or didn't get done.  This approach also helps clarify the intent of your code because you have to name those variables.
-# For code that need to manipulate Emacs state a lot or cross-reference many variables, like my [[https://github.com/meedstrom/deianira/blob/master/deianira.el][deianira.el]], it helped me a lot.
 
 * Roll your own
 
@@ -96,40 +103,26 @@ Your very own asyncloop in three s-exps:
 Now let's test the program!
 
 #+begin_src elisp
-(setq full-fns (list
-                (lambda () (sit-for .4) (message "foo"))
-                (lambda () (sit-for .4) (message "bar"))
-                (lambda () (sit-for .4) (message "baz"))
-                (lambda () (sit-for .4) (message "zab"))
-                (lambda () (sit-for .4) (message "rab"))
-                (lambda () (sit-for .4) (message "oof"))))
+;; Background variables
+(progn
+  (setq full-fns (list
+                  (lambda () (sit-for .4) (message "foo"))
+                  (lambda () (sit-for .4) (message "bar"))
+                  (lambda () (sit-for .4) (message "baz"))
+                  (lambda () (sit-for .4) (message "zab"))
+                  (lambda () (sit-for .4) (message "rab"))
+                  (lambda () (sit-for .4) (message "oof"))))
+  (setq my-queue (queue-create :fns full-fns)))
 
 ;; Test like this. Watch *Messages* and try to interrupt with some input.
-(progn
-  (setq my-queue (queue-create :fns full-fns))
+(progn  
+  (setf (queue-fns my-queue) full-fns)
   (resume my-queue))
 #+end_src
 
 *** Refinement
 
-Here's a version of =eat= that should grow the call-stack more slowly, but only in cases where you programmatically add a very large number of functions at once to =(queue-fns my-queue)= and then run =resume=.
-
-#+begin_src elisp
-(defun eat (queue)
-  (or
-   (cl-loop repeat (length (queue-fns queue))
-            if (queue-fns queue)
-            do (progn
-                 (funcall (car (queue-fns queue)))
-                 (pop (queue-fns queue)))
-            else do (message "All done") and return t)
-   (null (queue-fns queue))
-   (eat queue)))
-#+end_src
-
-In the more common case where you only add one function at a time (typically a function that adds itself when it sees that there's more work to do) while the queue runs, the above makes no difference.
-
-What you can do is simply prune the call stack every 100 calls or so.  So here's a different version of =eat=:
+The function =eat= uses recursion, which is cool and all but risks tripping =max-lisp-eval-depth= in a very long loop.  So let's edit it to prune the call stack every 100 calls:
 
 #+begin_src elisp
 (setq recursion-ctr 0)
@@ -142,30 +135,6 @@ What you can do is simply prune the call stack every 100 calls or so.  So here's
         (setq recursion-ctr 0)
         (run-with-timer .01 nil #'eat queue)
         nil)
-    (eat queue)
     (message "All done"))
   nil)
-#+end_src
-
-With this version, the cl-loop rewrite should be superfluous.  However, I suspect that whenever you can predetermine that you have, say, 2000 function calls to make, Emacs Lisp can execute them faster thru cl-loop than thru the recursion method.
-
-That's just a suspicion I haven't tested, but if it's true, we can merge the two methods:
-
-#+begin_src elisp
-(setq recursion-ctr 0)
-(defun eat (queue)
-  (or
-   (cl-loop repeat (length (queue-fns queue))
-            if (queue-fns queue)
-            do (progn
-                 (funcall (car (queue-fns queue)))
-                 (pop (queue-fns queue)))
-            else do (message "All done") and return t)
-   (null (queue-fns queue))
-   ;; Prune the call stack when recursion depth hits 100.
-   (if (> 100 (cl-incf recursion-ctr))
-       (eat queue)
-     (setq recursion-ctr 0)
-     (run-with-timer .01 nil #'eat queue)
-     nil)))
 #+end_src

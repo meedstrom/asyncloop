@@ -19,7 +19,7 @@
 
 ;; Author:  <meedstrom91@gmail.com>
 ;; Created: 2022-10-30
-;; Version: 0.4
+;; Version: 0.4.1
 ;; Keywords: tools
 ;; Homepage: https://github.com/meedstrom/asyncloop
 ;; Package-Requires: ((emacs "28.1"))
@@ -83,16 +83,15 @@ Finally, return the log line as a string so you can pass it on to
 (defun asyncloop-clock-funcall (loop fn)
   "Run FN; log result and time elapsed to LOOP's debug buffer."
   (with-timeout
-      (asyncloop-timeout
-       (asyncloop-cancel loop)
-       (message "%s" (concat
-                      (asyncloop-log loop
-                        "Canceled: a step took longer than %.2f sec!"
-                        asyncloop-timeout)
-                      (when-let ((buf (asyncloop-debug-buffer loop)))
-                        (format " See buffer %s" (buffer-name buf)))
-                      "You may also override `asyncloop-timeout'."))
-       nil)
+      (5 (asyncloop-cancel loop)
+         (message "%s %s"
+                  (asyncloop-log loop
+                    "Canceling: a step took longer than 5 sec!")
+                  ;; Let end users know which package is responsible
+                  (if-let ((buf (asyncloop-debug-buffer loop)))
+                      (format "See buffer %s" (buffer-name buf))
+                    (format "%s called by asyncloop object %s" fn loop)))
+         nil)
     (let ((fn-name (if (symbolp fn) fn "lambda"))
           (then (current-time))
           (result (funcall fn loop)))
@@ -134,15 +133,10 @@ Expected format:
 Ensure the loop will restart fresh on the next call to
 `asyncloop-run'."
   (setf (asyncloop-remainder loop) nil)
-  (asyncloop-log loop "Loop cancelled"))
+  (asyncloop-log loop "Loop told to cancel"))
 
 (defvar asyncloop-recursion-ctr 0
   "How deeply `asyncloop-chomp' has recursed.")
-
-(defvar asyncloop-timeout 5
-  "Time in seconds that should trigger a timeout.
-This is applied to each individual function in an asyncloop, not
-the whole loop.")
 
 (defun asyncloop-chomp (loop)
   (asyncloop-with-slots (remainder starttime scheduled timer paused) loop
@@ -166,7 +160,7 @@ the whole loop.")
         (setf scheduled t)
         (named-timer-idle-run timer 1.0 nil #'asyncloop-resume-1 loop))
        ;; round and round we go
-       ((> 900 (cl-incf asyncloop-recursion-ctr))
+       ((> 100 (cl-incf asyncloop-recursion-ctr))
         (asyncloop-chomp loop))
        ;; Every 100 calls, prune the call stack to minimize the risk of
        ;; tripping `max-lisp-eval-depth'.
