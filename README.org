@@ -15,7 +15,7 @@
 * News
 - 2023-11-10 (Version 0.4)
   - Eliminate 90%+ of performance overhead
-  - Introduce =:immediate-break-on-input=, for zero-latency response to user activity
+  - Introduce =:immediate-break-on-input=, which uses =while-no-input= for true instant response to user activity
   - Introduce =asyncloop-pause= and =asyncloop-resume=
 
 * Intro
@@ -79,7 +79,7 @@ Now, the intent of this package is still to give you a nice DX (developer experi
 
 But no matter how popular this package gets, I can stand on the soapbox of this README so less people have to retrace my steps!  Here's how you do it!
 
-Your very own asyncloop in three s-exps:
+*** Your very own asyncloop in three s-exps
 
 #+begin_src elisp
 (cl-defstruct (queue (:constructor queue-create)
@@ -100,7 +100,7 @@ Your very own asyncloop in three s-exps:
     (run-with-idle-timer 1 nil #'resume queue)))
 #+end_src
 
-Now let's test the program!
+*** Now let's test the program!
 
 #+begin_src elisp
 ;; Background variables

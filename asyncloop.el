@@ -19,7 +19,7 @@
 
 ;; Author:  <meedstrom91@gmail.com>
 ;; Created: 2022-10-30
-;; Version: 0.4.1
+;; Version: 0.4.2-snapshot
 ;; Keywords: tools
 ;; Homepage: https://github.com/meedstrom/asyncloop
 ;; Package-Requires: ((emacs "28.1"))
@@ -81,7 +81,9 @@ Finally, return the log line as a string so you can pass it on to
     text))
 
 (defun asyncloop-clock-funcall (loop fn)
-  "Run FN; log result and time elapsed to LOOP's debug buffer."
+  "Run FN; log result and time elapsed to LOOP's debug buffer.
+Return nil if the command timed out, and the log message
+otherwise."
   (with-timeout
       (5 (asyncloop-cancel loop)
          (message "%s %s"
@@ -135,14 +137,23 @@ Ensure the loop will restart fresh on the next call to
   (setf (asyncloop-remainder loop) nil)
   (asyncloop-log loop "Loop told to cancel"))
 
+;; REVIEW: If there are two different asyncloops, I guess the work will
+;; oscillate, 100 calls for one and then 100 calls for the other and back.
+;; Should we print something when that happens so when someone watches one loop
+;; they don't conclude that it got stuck?
 (defvar asyncloop-recursion-ctr 0
   "How deeply `asyncloop-chomp' has recursed.")
 
 (defun asyncloop-chomp (loop)
   (asyncloop-with-slots (remainder starttime scheduled timer paused) loop
-    ;; REVIEW: is it saner to leave -remainder unpopped during the funcall, or
-    ;; would I rather pop and add it back after an error, with a condition-case?
-    ;; I don't like using condition-case so I'll try it this way for now.
+    ;; REVIEW: It may be more intuitive if we pop remainder and just push the
+    ;; fn back on in case of an error or interruption, via `condition-case'.
+    ;; Then when the programmer inspects `asyncloop-remainder', they will see
+    ;; only the next functions to run and not also the function being run.  But
+    ;; I don't know what's more useful.  One problem with popping only after
+    ;; success, as we do here, is that it seems more difficult to reason about
+    ;; if the programmer wants to manipulate `asyncloop-remainder' in a more
+    ;; complex way.
     (when (asyncloop-clock-funcall loop (car remainder))
       (pop remainder)
       (cond
@@ -151,11 +162,10 @@ Ensure the loop will restart fresh on the next call to
           (asyncloop-log loop "Loop ended, total wall-time %.2fs" elapsed)))
        (paused
         (asyncloop-log loop "Loop paused"))
-       ;; (This clause only used when :immediate-break-on-input nil.  If this
-       ;; function was called through `while-no-input', it never arrives here.)
+       ;; (This clause only useful if :immediate-break-on-input nil.  If t, we
+       ;; never arrive here anyway.)
        ;; User just did I/O, so free a moment for Emacs to respond to it.
-       ;; Because it's on an idle timer, this moment may be extended
-       ;; indefinitely.
+       ;; Because of the idle timer, this moment may be extended indefinitely.
        ((input-pending-p)
         (setf scheduled t)
         (named-timer-idle-run timer 1.0 nil #'asyncloop-resume-1 loop))
@@ -226,14 +236,15 @@ invocation of `asyncloop-resume-1' on an idle timer."
       ;; most functions to complete in a short time, so it would mainly be a
       ;; source of spurious bugs because C-g happened to hit at just the wrong
       ;; time.  Instead, to counter the case of a long-running or hung function,
-      ;; we use timeout inside `asyncloop-clock-funcall'.
+      ;; I put a timeout inside `asyncloop-clock-funcall'.
       (asyncloop-chomp loop))))
 
 ;;;###autoload
-(cl-defun asyncloop-run (funs &key
-                              immediate-break-on-input
-                              on-interrupt-discovered
-                              debug-buffer-name)
+(cl-defun asyncloop-run
+    (funs &key
+          immediate-break-on-input
+          on-interrupt-discovered
+          debug-buffer-name)
   "Attempt to run the series of functions in list FUNS.
 Execute them in sequence, but pause on user activity to keep
 Emacs feeling snappy.
