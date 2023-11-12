@@ -34,17 +34,17 @@
 (require 'named-timer)
 
 (defun asyncloop-reset-all ()
-  "Cancel all asyncloops and wipe `asyncloop-objects'.
-Mainly for debugging."
+  "Cancel all asyncloops and wipe `asyncloop-objects'."
   (interactive)
   (ignore-errors
-    (cl-loop for cell in asyncloop-objects
-             do (asyncloop-cancel (cdr cell))))
+    (cl-loop for (_id . loop) in asyncloop-objects
+             do
+             (asyncloop-log loop "All loops reset")
+             (asyncloop-cancel loop)))
   (setq asyncloop-objects nil)
-  (if (eq (help-fns-find-keymap-name (current-local-map))
-          'asyncloop-debug-buffer-keymap)
-      (message "In %s: All asyncloops cancelled" (buffer-name))
-    (message "All asyncloops cancelled")))
+  (if (derived-mode-p 'asyncloop-debug-buffer-mode)
+      (message "All asyncloops reset due to quit in buffer %s" (buffer-name))
+    (message "All asyncloops reset")))
 
 (defun asyncloop-keyboard-quit ()
   "Wrapper for `keyboard-quit' that also cancels all loops."
@@ -53,10 +53,16 @@ Mainly for debugging."
       (asyncloop-reset-all)
     (keyboard-quit)))
 
-(defvar asyncloop-debug-buffer-keymap
+(defvar asyncloop-debug-buffer-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map [remap keyboard-quit] #'asyncloop-keyboard-quit)
     map))
+
+(define-derived-mode asyncloop-debug-buffer-mode special-mode
+  "Asyncloop-Debug"
+  (setq truncate-lines t)
+  (setq buffer-read-only nil)
+  (set (make-local-variable 'window-point-insertion-type) t))
 
 (defun asyncloop-log (loop &rest args)
   "Log a message to the debug buffer associated with LOOP.
@@ -344,8 +350,7 @@ you can improve your debugging experience."
                      :debug-buffer
                      (when debug-buffer-name
                        (with-current-buffer (get-buffer-create debug-buffer-name)
-                         (set (make-local-variable 'window-point-insertion-type) t)
-                         (use-local-map asyncloop-debug-buffer-keymap)
+                         (asyncloop-debug-buffer-mode)
                          (current-buffer))))))))
     (asyncloop-with-slots (remainder scheduled just-launched starttime timer paused) loop
       ;; Ensure that being triggered by several concomitant hooks won't spam the
