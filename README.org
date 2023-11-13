@@ -15,7 +15,7 @@
 * News
 - 2023-11-10 (Version 0.4)
   - Eliminate 90%+ of performance overhead
-  - Introduce =:immediate-break-on-input=, which uses =while-no-input= for true instant response to user activity
+  - Introduce =:immediate-break-on-user-activity=, which uses =while-no-input= for true instant response to user activity
   - Introduce =asyncloop-pause= and =asyncloop-resume=
 
 * Intro

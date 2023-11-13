@@ -22,7 +22,7 @@
 ;; Version: 0.4.2-snapshot
 ;; Keywords: tools
 ;; Homepage: https://github.com/meedstrom/asyncloop
-;; Package-Requires: ((emacs "28"))
+;; Package-Requires: ((emacs "28") (named-timer "0.1"))
 
 ;;; Commentary:
 
@@ -114,6 +114,7 @@ otherwise."
   timer
   log-buffer
   immediate-break-on-user-activity
+  id
   (paused nil)
   (remainder nil)
   (scheduled nil)
