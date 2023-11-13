@@ -153,7 +153,6 @@ return nil."
    collect (cons id (- (timer-until some-timer nil)))
    into result
    finally return (cl-sort result #'< :key #'cdr)))
-;; (asyncloop-scheduled-loops)
 
 (defun asyncloop-chomp (loop)
   (asyncloop-with-slots (remainder starttime scheduled timer paused immediate-break-on-user-activity) loop
@@ -199,6 +198,20 @@ function."
     (setf paused t)
     (named-timer-cancel timer)))
 
+(defun asyncloop-notify-simultaneity (loop)
+  "Write in all loops' logs that multiple loops are active.
+This is done so when someone watches a log they don't conclude
+that it got stuck."
+  (cl-loop
+   with simultaneous = nil
+   for (id . _secs) in (asyncloop-scheduled-loops)
+   do (asyncloop-log (alist-get id asyncloop-objects)
+        "Two or more asyncloops running, please wait...")
+   (setq simultaneous t)
+   finally do (when simultaneous
+                (asyncloop-log loop
+                  "Two or more asyncloops running, please wait..."))))
+
 ;; TODO: This docstring reminded me of something. it'd be nice to offer the
 ;; option to set `inhibit-quit' nil, or to not use any timers at all in favour
 ;; of putting a caller directly on various hooks.  That has the advantage of
@@ -219,35 +232,6 @@ funcalls in that they always set `inhibit-quit' t."
     (setf paused nil)
     (setf scheduled t)
     (named-timer-idle-run timer .05 nil #'asyncloop-resume-1 loop)))
-
-(defun asyncloop-notify-simultaneity (loop)
-  "Write in all loops' logs that multiple loops are active.
-This is done so when someone watches a log they don't conclude
-that it got stuck."
-  (cl-loop
-   with simultaneous = nil
-   for (id . _secs) in (asyncloop-scheduled-loops)
-   do (asyncloop-log (alist-get id asyncloop-objects)
-        "Two or more asyncloops running, please wait...")
-   (setq simultaneous t)
-   finally do (when simultaneous
-                (asyncloop-log loop
-                  "Two or more asyncloops running, please wait..."))))
-
-;; unused, rarely notifies the right log for some reason (emacs timers really
-;; don't behave predictably...)
-(defun asyncloop-tell-other-loops (this-loop)
-  "Write in other loops' logs that it's THIS-LOOP's turn.
-This is done so when someone watches a log they don't conclude
-that it got stuck.  Especially relevant because
-`asyncloop-recursion-ctr' maxes at 100, which means the work will
-oscillate: 100 calls for one loop and then 100 calls for the
-other and back."
-  (cl-loop
-   for (id . _secs) in (asyncloop-scheduled-loops)
-   unless (eq id (asyncloop-id this-loop))
-   do (asyncloop-log (alist-get id asyncloop-objects)
-        "Another loop scheduled, waiting...")))
 
 (defun asyncloop-resume-1 (loop)
   "Resume executing asyncloop LOOP.
