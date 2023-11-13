@@ -19,7 +19,7 @@
 
 ;; Author:  <meedstrom91@gmail.com>
 ;; Created: 2022-10-30
-;; Version: 0.4.2-snapshot
+;; Version: 0.4.2
 ;; Keywords: tools
 ;; Homepage: https://github.com/meedstrom/asyncloop
 ;; Package-Requires: ((emacs "28") (named-timer "0.1"))
@@ -91,21 +91,11 @@ Finally, return the log line as a string so you can pass it on to
   "Run FN; log result and time elapsed to LOOP's log buffer.
 Return nil if the command timed out, and return the log message
 otherwise."
-  (with-timeout
-      (5 (asyncloop-cancel loop)
-         (message "%s %s"
-                  (asyncloop-log loop
-                    "Canceling: a step took longer than 5 sec!")
-                  ;; Let end users know which package is responsible
-                  (if-let ((buf (asyncloop-log-buffer loop)))
-                      (format "See buffer %s" (buffer-name buf))
-                    (format "%s called by asyncloop object %s" fn loop)))
-         nil)
-    (let ((fn-name (if (symbolp fn) fn "lambda"))
-          (then (current-time))
-          (result (funcall fn loop)))
-      (asyncloop-log loop
-        "Took %.2fs: %s: %s" (float-time (time-since then)) fn-name result))))
+  (let ((fn-name (if (symbolp fn) fn "lambda"))
+        (then (current-time))
+        (result (funcall fn loop)))
+    (asyncloop-log loop
+      "Took %.2fs: %s: %s" (float-time (time-since then)) fn-name result)))
 
 (cl-defstruct (asyncloop (:constructor asyncloop-create)
                          (:copier nil))
@@ -154,51 +144,48 @@ Return an alist associating active loop IDs (as car) with the
 time they have left on their timers, in seconds (as cdr).  The
 alist is sorted by soonest first.  If no loops are scheduled,
 return nil."
-  (cl-loop with result = nil
-           for (id . loop) in asyncloop-objects
-           for some-timer = (cl-find (named-timer-get (asyncloop-timer loop))
-                                     timer-idle-list)
-           when some-timer
-           collect (cons id (- (timer-until some-timer nil)))
-           into result
-           finally return (cl-sort result #'< :key #'cdr)))
+  (cl-loop
+   with result = nil
+   for (id . loop) in asyncloop-objects
+   for some-timer = (cl-find (named-timer-get (asyncloop-timer loop))
+                             timer-idle-list)
+   when some-timer
+   collect (cons id (- (timer-until some-timer nil)))
+   into result
+   finally return (cl-sort result #'< :key #'cdr)))
 ;; (asyncloop-scheduled-loops)
 
 (defun asyncloop-chomp (loop)
-  (asyncloop-with-slots (remainder starttime scheduled timer paused) loop
-    ;; REVIEW: It may be more intuitive if we pop remainder and just push the
-    ;; fn back on in case of an error or interruption, via `condition-case'.
-    ;; Then when the programmer inspects `asyncloop-remainder', they will see
-    ;; only the next functions to run and not also the function being run.  But
-    ;; I don't know what's more useful.  One problem with popping only after
-    ;; success, as we do here, is that it seems more difficult to reason about
-    ;; if the programmer wants to manipulate `asyncloop-remainder' in a more
-    ;; complex way.
-    (when (asyncloop-clock-funcall loop (car remainder))
-      (pop remainder)
-      (cond
-       ((null remainder)
-        (let ((elapsed (float-time (time-since starttime))))
-          (asyncloop-log loop "Loop ended, total wall-time %.2fs" elapsed)))
-       (paused
-        (asyncloop-log loop "Loop paused"))
-       ;; (This clause only useful if :immediate-break-on-user-activity nil.
-       ;; If t, we never arrive here anyway.)  User just did I/O, so free a
-       ;; moment for Emacs to respond to it.  Because of the idle timer, this
-       ;; moment may be extended indefinitely.
-       ((input-pending-p)
-        (setf scheduled t)
-        (named-timer-idle-run timer 1.0 nil #'asyncloop-resume-1 loop))
-       ;; round and round we go
-       ((> 100 (cl-incf asyncloop-recursion-ctr))
-        (asyncloop-chomp loop))
-       ;; Every 100 calls, prune the call stack to minimize the risk of
-       ;; tripping `max-lisp-eval-depth'.
-       (t
-        (setq asyncloop-recursion-ctr 0)
-        (asyncloop-schedule-immediately loop)))))
-  ;; NOTE: The return value is meaningful to `while-no-input'!
-  nil)
+  (asyncloop-with-slots (remainder starttime scheduled timer paused immediate-break-on-user-activity) loop
+    (asyncloop-clock-funcall loop (car remainder))
+    (pop remainder)
+    (cond
+     ((null remainder)
+      (let ((elapsed (float-time (time-since starttime))))
+        (asyncloop-log loop "Loop ended, total wall-time %.2fs" elapsed)))
+     (paused
+      (asyncloop-log loop "Loop paused"))
+     ;; (This clause only applies if :immediate-break-on-user-activity nil.
+     ;; If t, we never arrive here anyway.)  User just did I/O, so free a
+     ;; moment for Emacs to respond to it.  Because of the idle timer, this
+     ;; moment may be extended indefinitely.
+     ((input-pending-p)
+      (setf scheduled t)
+      (named-timer-idle-run timer 1.0 nil #'asyncloop-resume-1 loop))
+     ;; round and round we go
+     ((> 100 (cl-incf asyncloop-recursion-ctr))
+      (asyncloop-chomp loop))
+     ;; Every 100 calls, prune the call stack to minimize the risk of
+     ;; tripping `max-lisp-eval-depth'.
+     (t
+      (setq asyncloop-recursion-ctr 0)
+      (setf scheduled t)
+      (named-timer-idle-run timer .05 nil #'asyncloop-resume-1 loop)))
+    (if immediate-break-on-user-activity
+        ;; Say "no problems" to `while-no-input'
+        nil
+      ;; Say "no problems" to the caller of `with-local-quit'
+      t)))
 
 (defun asyncloop-pause (loop)
   "Pause LOOP.
@@ -213,37 +200,54 @@ function."
     (named-timer-cancel timer)))
 
 ;; TODO: This docstring reminded me of something. it'd be nice to offer the
-;; option to set `inhibit-quit' nil, or to not use any timers at all (not even
-;; idle timer) in favour of putting an internal function directly on various
-;; hooks.  That has the advantage of not demoting errors to mere messages.
+;; option to set `inhibit-quit' nil, or to not use any timers at all in favour
+;; of putting a caller directly on various hooks.  That has the advantage of
+;; not demoting errors to mere messages.
 (defun asyncloop-resume (loop)
-  "Set asyncloop LOOP to resume when Emacs has a moment.
-In other words, actually places `asyncloop-resume-1' on a short
-timer, which has the effect of deferring it until Emacs finishes
-executing the current call stack.
+  "Prep asyncloop LOOP to resume when Emacs has a moment.
+More exactly, place `asyncloop-resume-1' on a short timer, which
+has the effect of deferring it until Emacs finishes executing the
+current call stack.
 
 A secondary effect is that by exposing this wrapper to end users
-instead of `asyncloop-resume-1' itself, we ensure that the latter
-is always called by a timer and not directly, making behavior
+instead of `asyncloop-resume-1', we ensure that the latter is
+always called by a timer and not directly, making behavior
 consistent.  For example, timers behave different from direct
 funcalls in that they always set `inhibit-quit' t."
   (asyncloop-with-slots (paused scheduled timer) loop
     (asyncloop-log loop "Loop told to resume")
     (setf paused nil)
-    (asyncloop-schedule-immediately loop)))
+    (setf scheduled t)
+    (named-timer-idle-run timer .05 nil #'asyncloop-resume-1 loop)))
 
-(defun asyncloop-schedule-immediately (loop)
-  "Pass LOOP to `asyncloop-resume-1' after a very short timer.
-If there's another loop to go first, log that, so when someone
-watches a log they don't conclude that it got stuck.
-Especially relevant because `asyncloop-recursion-ctr' maxes at
-100, which means the work will oscillate, 100 calls for one loop
-and then 100 calls for the other and back."
-  (setf (asyncloop-scheduled loop) t)
-  (when-let ((soonest (car-safe (asyncloop-scheduled-loops))))
-    (when (> .01 (cdr soonest))
-      (asyncloop-log loop "Another loop at work, waiting...")))
-  (named-timer-idle-run (asyncloop-timer loop) .01 nil #'asyncloop-resume-1 loop))
+(defun asyncloop-notify-simultaneity (loop)
+  "Write in all loops' logs that multiple loops are active.
+This is done so when someone watches a log they don't conclude
+that it got stuck."
+  (cl-loop
+   with simultaneous = nil
+   for (id . _secs) in (asyncloop-scheduled-loops)
+   do (asyncloop-log (alist-get id asyncloop-objects)
+        "Two or more asyncloops running, please wait...")
+   (setq simultaneous t)
+   finally do (when simultaneous
+                (asyncloop-log loop
+                  "Two or more asyncloops running, please wait..."))))
+
+;; unused, rarely notifies the right log for some reason (emacs timers really
+;; don't behave predictably...)
+(defun asyncloop-tell-other-loops (this-loop)
+  "Write in other loops' logs that it's THIS-LOOP's turn.
+This is done so when someone watches a log they don't conclude
+that it got stuck.  Especially relevant because
+`asyncloop-recursion-ctr' maxes at 100, which means the work will
+oscillate: 100 calls for one loop and then 100 calls for the
+other and back."
+  (cl-loop
+   for (id . _secs) in (asyncloop-scheduled-loops)
+   unless (eq id (asyncloop-id this-loop))
+   do (asyncloop-log (alist-get id asyncloop-objects)
+        "Another loop scheduled, waiting...")))
 
 (defun asyncloop-resume-1 (loop)
   "Resume executing asyncloop LOOP.
@@ -254,24 +258,33 @@ invocation of `asyncloop-resume-1' on an idle timer."
     (setf paused nil)
     (setf scheduled nil)
     (if remainder
-        (if immediate-break-on-user-activity
-            (let ((result (while-no-input (asyncloop-chomp loop))))
-              (cond
-               ((eq t result)
-                ;; User just did I/O, so free a moment for Emacs to
-                ;; respond to it.  Because it's on an idle timer, this
-                ;; moment may be extended indefinitely.
-                (setf scheduled t)
-                (named-timer-idle-run timer 1.0 nil #'asyncloop-resume-1 loop))
-               ((not (null result))
-                (error "Asyncloop gave an unexpected result: %s" result))))
-          ;; Considered adding `with-local-quit' here.  Not sane since we expect
-          ;; most functions to complete in a short time, so it would mainly be a
-          ;; source of spurious bugs because C-g happened to hit at just the wrong
-          ;; time.  Instead, to counter the case of a long-running or hung function,
-          ;; I put a timeout inside `asyncloop-clock-funcall'.
-          (asyncloop-chomp loop))
-      (asyncloop-log loop "Scheduled loop was cleared, doing nothing"))))
+        (progn
+          (asyncloop-notify-simultaneity loop)
+          (if immediate-break-on-user-activity
+              (let ((result (while-no-input (asyncloop-chomp loop))))
+                (cond
+                 ((eq t result)
+                  ;; User just did I/O, so free a moment for Emacs to
+                  ;; respond to it.  Because it's on an idle timer, this
+                  ;; moment may be extended indefinitely.
+                  (setf scheduled t)
+                  (named-timer-idle-run timer 1.0 nil #'asyncloop-resume-1 loop))
+                 ((not (null result))
+                  (error "Asyncloop gave an unexpected result: %s" result))))
+            ;; Without `while-no-input', something should be able to interrupt
+            ;; a hung function, so allow C-g to do so.  I tried `with-timeout'
+            ;; but found it unreliable in the context of several loops active
+            ;; at the same time.
+            ;;
+            ;; The drawback is that C-g could hit at the exactly wrong time,
+            ;; even for a loop that has no flaws.  We implicitly promised the
+            ;; user in the docstring that the function would not be
+            ;; interrupted.  So when it happens, cancel the whole loop, as
+            ;; that'll probably lead to more correctness.
+            (when (null (with-local-quit (asyncloop-chomp loop)))
+              (setf remainder nil)
+              (asyncloop-log loop "Interrupted by C-g, cancelling"))))
+      (asyncloop-log loop "Scheduled loop found cleared, doing nothing"))))
 
 ;;;###autoload
 (cl-defun asyncloop-run
@@ -381,14 +394,16 @@ you can improve your debugging experience."
   ;; Name it as a deterministic hash of the input, ensuring that
   ;; next call with the same input can recognize that it was
   ;; already called.
-  (let* ((log-buffer-name (or log-buffer-name debug-buffer-name))
+  (let* ((log-buffer-name (or log-buffer-name debug-buffer-name nil))
          (immediate-break-on-user-activity (or immediate-break-on-user-activity
-                                               immediate-break-on-input))
+                                               immediate-break-on-input
+                                               nil))
          (id (abs (sxhash (list funs on-interrupt-discovered log-buffer-name immediate-break-on-user-activity))))
          (loop
           (or (alist-get id asyncloop-objects)
               (setf (alist-get id asyncloop-objects)
                     (asyncloop-create
+                     :id id
                      :funs funs
                      :timer (intern (format "a%d" id))
                      :immediate-break-on-user-activity immediate-break-on-user-activity
@@ -397,10 +412,10 @@ you can improve your debugging experience."
                        (with-current-buffer (get-buffer-create log-buffer-name)
                          (asyncloop-log-mode)
                          (current-buffer))))))))
-    (asyncloop-with-slots (remainder scheduled just-launched starttime timer paused) loop
-      ;; Ensure that being triggered by several concomitant hooks won't spam the
-      ;; log buffer, or worse, start multiple loops (this somehow happened in
-      ;; the past -- maybe if a timer is at 0 seconds, it can't be cancelled?).
+    (asyncloop-with-slots (remainder scheduled just-launched starttime timer paused scheduled) loop
+      ;; Ensure that being triggered by several concomitant hooks won't spam
+      ;; the log buffer, or worse, start multiple loops (somehow happened in
+      ;; the past -- maybe if a timer is at 0 seconds, it can't be cancelled?)
       (unless just-launched
         (setf just-launched t)
         (cond
@@ -408,34 +423,33 @@ you can improve your debugging experience."
           (setf just-launched nil)
           (asyncloop-log loop "Already running, letting it continue"))
 
-         ;; Resuming an apparently half-done thing
+         ;; Resuming an apparently half-done loop
          ((and remainder (not (equal remainder funs)))
           (if paused
               (progn
                 (asyncloop-log loop
                   "Resuming paused loop.  Functions left to run: %S"
                   remainder)
-                (asyncloop-schedule-immediately loop))
-            ;; TODO: no need to check for timeout, typically `asyncloop-run'
-            ;; won't be run in a context where `inhibit-quit' is set
-            (let ((timed-out
-                   (when on-interrupt-discovered
-                     (null (asyncloop-clock-funcall
-                            loop on-interrupt-discovered)))))
-              (unless timed-out
-                (if (null remainder)
-                    (asyncloop-log loop "Cancelled by ON-INTERRUPT-DISCOVERED")
-                  (asyncloop-log loop
-                    "Loop had been interrupted, resuming.  Functions left to run: %S"
-                    remainder)
-                  (asyncloop-schedule-immediately loop))))))
+                (setf scheduled t)
+                (named-timer-idle-run timer .05 nil #'asyncloop-resume-1 loop))
+            (when on-interrupt-discovered
+              (with-local-quit 
+                (asyncloop-clock-funcall loop on-interrupt-discovered)))
+            (if (null remainder)
+                (asyncloop-log loop "Cancelled by ON-INTERRUPT-DISCOVERED")
+              (asyncloop-log loop
+                "Loop had been interrupted, resuming.  Functions left to run: %S"
+                remainder)
+              (setf scheduled t)
+              (named-timer-idle-run timer .05 nil #'asyncloop-resume-1 loop))))
 
          (t
           ;; Launch anew the full loop
           (setf remainder funs)
           (setf starttime (current-time))
           (asyncloop-log loop "Loop started")
-          (asyncloop-schedule-immediately loop)))))
+          (setf scheduled t)
+          (named-timer-idle-run timer .05 nil #'asyncloop-resume-1 loop)))))
     loop))
 
 (set-advertised-calling-convention
