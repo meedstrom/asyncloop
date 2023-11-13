@@ -44,10 +44,12 @@ Enter this library.  It helps you run a series of functions without hanging Emac
 
 - zero delay in-between function calls
 
-- easy profiling: check the debug buffer to see how long each of your functions take
+- easy profiling: check the log buffer to see how long each of your functions take
 
-- made with 200 lines of code
+- made with 250 lines of code
 
+  - and uses [[https://github.com/DarwinAwardWinner/emacs-named-timer][named-timer]], an excellent 50-line library
+  
 *Usage*
 
 The API consists mainly of =(asyncloop-run)=, consult its docstring.  You may also find reason to call:
@@ -65,18 +67,20 @@ For an example usage, find the use of "asyncloop-run" inside [[https://github.co
 What to include in each mini-function?  Consider
 
 - writing a general sanity check and calling it at the top of each function
-- writing a cleanup function and calling it each time you call =asyncloop-cancel=
-
+- writing a cleanup function and calling it whenever you call =asyncloop-cancel=
+- doing the heavy or bug-prone calculations inside some let-bindings and then side-effects at the end
+  
 *Anti-wishlist (won't implement)*
 
-- The argument-passing style enabled in deferred.el among others, where you can use the return value from each function as input for the next function, sounds elegant but I've found it awful for debugging (perhaps I was missing some tooling).
+- The argument-passing style enabled in deferred.el among others, where you can use the return value from each function as input for the next function, sounds elegant but I've found it awful for debugging.  Perhaps I was missing some tooling.
   - I recommend instead the "crude" approach of keeping state in external variables that you can inspect along the way, making it easy to figure out what work a broken chain did or didn't get done.  This approach also helps clarify the intent of your code because you have to name those variables.
+  - The upside of this design is you can return any value you want and it's printed in the log buffer, making for pleasant debugging.
 
-* Roll your own
+* Bonus chapter: Roll your own
 
 The following example snippet shows a way you can write your own solution.
 
-When I first wrote asyncloop, I didn't know about either =input-pending-p= or =while-no-input=, which would have been key.  Emacs Lisp is full of power tools laying forgotten under sofa cushions.
+When I first wrote asyncloop, I didn't know about either =input-pending-p= or =while-no-input=, which would have been great to know.  Emacs Lisp is full of power tools laying forgotten under sofa cushions.
 
 Now, the intent of this package is still to give you a nice DX (developer experience) and reduce boilerplate.
 
