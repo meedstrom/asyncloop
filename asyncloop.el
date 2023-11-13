@@ -339,20 +339,32 @@ object on to any of the functions:
 - `asyncloop-log'
 
 To have a function in FUNS repeat itself until some condition is
-met (in the style of a while-loop), have it push itself onto the
-result of `asyncloop-remainder', effectively shoving itself back
-onto the front of the queue of things-to-execute:
+met (in the style of a while-loop), have it push some symbol such
+as t onto the result of the accessor `asyncloop-remainder', which
+has the effect of ensuring that the same function will run again:
 
   (unless ...some-condition-that-means-done...
-    (push #\\='this-function (asyncloop-remainder loop)))
+    (push t (asyncloop-remainder loop)))
 
 As always with while-loop patterns, take a moment to ensure that
 there is no way it will repeat forever.  If it is meant to
-decrement a counter by `cl-decf' or consume a list one item at a
-time by `pop', do that earlier than the above form.
+decrement an external counter by `cl-decf' or consume a list one
+item at a time by `pop', do that earlier than the above form.
+
+The accessor `asyncloop-remainder' returns the list of functions
+left to run.  You can manipulate it however you like, but note
+that it includes the function currently being run, as the first
+element, and it will undergo a `pop' right after the function
+completes.  (That's why the above form works: the symbol t is
+just a placeholder to absorb the coming `pop'.)  Somewhat
+nonintuitive, but it had to be designed this way for robustness
+to interruption by `while-no-input'.
+
+A takeaway: if you wish to set the list to something entirely
+different via `setf', use a placeholder as first element!
 
 Optional string DEBUG-BUFFER-NAME controls whether to create a
-buffer of debug messages, and if so, its name.
+buffer of log messages, and if so, its name.
 
 It does not matter what the functions in FUNS return, but the
 debug buffer prints the return values, so by returning something
