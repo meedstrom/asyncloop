@@ -13,8 +13,11 @@
 [[https://stable.melpa.org/#/asyncloop][file:https://stable.melpa.org/packages/asyncloop-badge.svg]]
 
 * News
+- 2023-11-13 (Version 0.4.2)
+  - Always let users cancel what Emacs is doing with C-g if nothing else
+  - Notify when there are simultaneous asyncloops, so user doesn't conclude that one is stuck
 - 2023-11-10 (Version 0.4)
-  - Eliminate 90%+ of performance overhead
+  - Eliminate 90%+ of performance overhead.  Blazingly fast now!
   - Introduce =:immediate-break-on-user-activity=, which uses =while-no-input= for true instant response to user activity
   - Introduce =asyncloop-pause= and =asyncloop-resume=
 
