@@ -19,7 +19,7 @@
 
 ;; Author:  <meedstrom91@gmail.com>
 ;; Created: 2022-10-30
-;; Version: 0.4.3-snapshot
+;; Version: 0.4.3
 ;; Keywords: tools
 ;; Homepage: https://github.com/meedstrom/asyncloop
 ;; Package-Requires: ((emacs "28") (named-timer "0.1"))
@@ -378,10 +378,9 @@ you can improve your debugging experience."
   ;; Name it as a deterministic hash of the input, ensuring that
   ;; next call with the same input can recognize that it was
   ;; already called.
-  (let* ((log-buffer-name (or log-buffer-name debug-buffer-name nil))
+  (let* ((log-buffer-name (or log-buffer-name debug-buffer-name))
          (immediate-break-on-user-activity (or immediate-break-on-user-activity
-                                               immediate-break-on-input
-                                               nil))
+                                               immediate-break-on-input))
          (id (abs (sxhash (list funs on-interrupt-discovered log-buffer-name immediate-break-on-user-activity))))
          (loop
           (or (alist-get id asyncloop-objects)
@@ -396,6 +395,10 @@ you can improve your debugging experience."
                        (with-current-buffer (get-buffer-create log-buffer-name)
                          (asyncloop-log-mode)
                          (current-buffer))))))))
+    (when immediate-break-on-input
+      (warn "Deprecated calling convention will be removed Dec 2023: :immediate-break-on-input.  Use :immediate-break-on-user-activity."))
+    (when debug-buffer-name
+      (warn "Deprecated calling convention will be removed Dec 2023: :debug-buffer-name.  Use :log-buffer-name."))
     (asyncloop-with-slots (remainder scheduled just-launched starttime timer paused scheduled) loop
       ;; Ensure that being triggered by several concomitant hooks won't spam
       ;; the log buffer, or worse, start multiple loops (somehow happened in
@@ -446,7 +449,7 @@ you can improve your debugging experience."
 ;;;###autoload
 (define-obsolete-function-alias 'asyncloop-run-function-queue #'asyncloop-run
   "2023-11-09"
-  "Changed my mind.")
+  "Changed my mind.  This alias will be removed in Dec 2023.")
 
 (provide 'asyncloop)
 
