@@ -43,7 +43,7 @@
              (asyncloop-log loop "All loops reset")
              (asyncloop-cancel loop)))
   (setq asyncloop-objects nil)
-  (if (derived-mode-p 'asyncloop-debug-buffer-mode)
+  (if (derived-mode-p 'asyncloop-log-mode)
       (message "All asyncloops reset due to quit in buffer %s" (buffer-name))
     (message "All asyncloops reset")))
 
@@ -54,25 +54,25 @@
       (asyncloop-reset-all)
     (keyboard-quit)))
 
-(defvar asyncloop-debug-buffer-mode-map
+(defvar asyncloop-log-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map [remap keyboard-quit] #'asyncloop-keyboard-quit)
     map))
 
-(define-derived-mode asyncloop-debug-buffer-mode special-mode
-  "Asyncloop-Debug"
+(define-derived-mode asyncloop-log-mode special-mode
+  "Asyncloop-Log"
   (setq truncate-lines t)
   (setq buffer-read-only nil)
   (set (make-local-variable 'window-point-insertion-type) t))
 
 (defun asyncloop-log (loop &rest args)
-  "Log a message to the debug buffer associated with LOOP.
+  "Log a message to the log buffer associated with LOOP.
 Arguments ARGS are the arguments for `format'.
 
 Finally, return the log line as a string so you can pass it on to
 `warn' or `error' or the like."
   (declare (indent 1))
-  (let ((buf (asyncloop-debug-buffer loop))
+  (let ((buf (asyncloop-log-buffer loop))
         (text (apply #'format args)))
     (when (and buf (buffer-live-p buf))
       (with-current-buffer buf
@@ -88,7 +88,7 @@ Finally, return the log line as a string so you can pass it on to
     text))
 
 (defun asyncloop-clock-funcall (loop fn)
-  "Run FN; log result and time elapsed to LOOP's debug buffer.
+  "Run FN; log result and time elapsed to LOOP's log buffer.
 Return nil if the command timed out, and return the log message
 otherwise."
   (with-timeout
@@ -97,7 +97,7 @@ otherwise."
                   (asyncloop-log loop
                     "Canceling: a step took longer than 5 sec!")
                   ;; Let end users know which package is responsible
-                  (if-let ((buf (asyncloop-debug-buffer loop)))
+                  (if-let ((buf (asyncloop-log-buffer loop)))
                       (format "See buffer %s" (buffer-name buf))
                     (format "%s called by asyncloop object %s" fn loop)))
          nil)
@@ -112,7 +112,7 @@ otherwise."
   funs
   starttime
   timer
-  debug-buffer
+  log-buffer
   immediate-break-on-user-activity
   (paused nil)
   (remainder nil)
@@ -234,7 +234,7 @@ funcalls in that they always set `inhibit-quit' t."
 (defun asyncloop-schedule-immediately (loop)
   "Pass LOOP to `asyncloop-resume-1' after a very short timer.
 If there's another loop to go first, log that, so when someone
-watches a debug buffer they don't conclude that it got stuck.
+watches a log they don't conclude that it got stuck.
 Especially relevant because `asyncloop-recursion-ctr' maxes at
 100, which means the work will oscillate, 100 calls for one loop
 and then 100 calls for the other and back."
@@ -278,6 +278,7 @@ invocation of `asyncloop-resume-1' on an idle timer."
           immediate-break-on-user-activity
           immediate-break-on-input
           on-interrupt-discovered
+          log-buffer-name
           debug-buffer-name)
   "Attempt to run the series of functions in list FUNS.
 Execute them in sequence, but pause on user activity to keep
@@ -363,11 +364,11 @@ to interruption by `while-no-input'.
 A takeaway: if you wish to set the list to something entirely
 different via `setf', use a placeholder as first element!
 
-Optional string DEBUG-BUFFER-NAME controls whether to create a
+Optional string LOG-BUFFER-NAME controls whether to create a
 buffer of log messages, and if so, its name.
 
 It does not matter what the functions in FUNS return, but the
-debug buffer prints the return values, so by returning something
+log buffer prints the return values, so by returning something
 interesting (I suggest a short string constructed by `format'),
 you can improve your debugging experience."
   (declare (indent defun))
@@ -379,24 +380,25 @@ you can improve your debugging experience."
   ;; Name it as a deterministic hash of the input, ensuring that
   ;; next call with the same input can recognize that it was
   ;; already called.
-  (let* ((id (abs (sxhash (list funs on-interrupt-discovered debug-buffer-name immediate-break-on-user-activity))))
+  (let* ((log-buffer-name (or log-buffer-name debug-buffer-name))
+         (immediate-break-on-user-activity (or immediate-break-on-user-activity
+                                               immediate-break-on-input))
+         (id (abs (sxhash (list funs on-interrupt-discovered log-buffer-name immediate-break-on-user-activity))))
          (loop
           (or (alist-get id asyncloop-objects)
               (setf (alist-get id asyncloop-objects)
                     (asyncloop-create
                      :funs funs
                      :timer (intern (format "a%d" id))
-                     :immediate-break-on-user-activity
-                     (or immediate-break-on-user-activity
-                         immediate-break-on-input)
-                     :debug-buffer
-                     (when debug-buffer-name
-                       (with-current-buffer (get-buffer-create debug-buffer-name)
-                         (asyncloop-debug-buffer-mode)
+                     :immediate-break-on-user-activity immediate-break-on-user-activity
+                     :log-buffer
+                     (when log-buffer-name
+                       (with-current-buffer (get-buffer-create log-buffer-name)
+                         (asyncloop-log-mode)
                          (current-buffer))))))))
     (asyncloop-with-slots (remainder scheduled just-launched starttime timer paused) loop
       ;; Ensure that being triggered by several concomitant hooks won't spam the
-      ;; debug buffer, or worse, start multiple loops (this somehow happened in
+      ;; log buffer, or worse, start multiple loops (this somehow happened in
       ;; the past -- maybe if a timer is at 0 seconds, it can't be cancelled?).
       (unless just-launched
         (setf just-launched t)
@@ -440,7 +442,7 @@ you can improve your debugging experience."
  '(funs &key
    immediate-break-on-user-activity
    on-interrupt-discovered
-   debug-buffer-name) "2023-11-13")
+   log-buffer-name) "2023-11-13")
 
 ;;;###autoload
 (define-obsolete-function-alias 'asyncloop-run-function-queue #'asyncloop-run
