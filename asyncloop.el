@@ -19,7 +19,7 @@
 
 ;; Author: Martin Edström <meedstrom91@gmail.com>
 ;; Created: 2022-10-30
-;; Version: 0.4.4-snapshot
+;; Version: 0.4.4
 ;; Keywords: tools
 ;; Homepage: https://github.com/meedstrom/asyncloop
 ;; Package-Requires: ((emacs "28") (named-timer "0.1"))
@@ -93,12 +93,8 @@ Finally, return the log line as a string so you can pass it on to
         (then (current-time))
         (result (condition-case err
                     (funcall fn loop)
-                  (error
-                   (asyncloop-log loop "Function %S met an error: %s" fn err)
-                   (signal (car err) (cdr err)))
-                  ;; REVIEW: See if this works, and consider if it's necessary
-                  (quit
-                   (asyncloop-log loop "Function %S hit by a quit: %s" fn err)
+                  (t
+                   (asyncloop-log loop "During %s: %s" fn err)
                    (signal (car err) (cdr err))))))
     (asyncloop-log loop
       "Took %.2fs: %s: %s" (float-time (time-since then)) fn-name result)))
