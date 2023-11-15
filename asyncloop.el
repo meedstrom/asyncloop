@@ -88,9 +88,7 @@ Finally, return the log line as a string so you can pass it on to
     text))
 
 (defun asyncloop-clock-funcall (loop fn)
-  "Run FN; log result and time elapsed to LOOP's log buffer.
-Return nil if the command timed out, and return the log message
-otherwise."
+  "Run FN; log result and time elapsed to LOOP's log buffer."
   (let ((fn-name (if (symbolp fn) fn "lambda"))
         (then (current-time))
         (result (condition-case err
@@ -176,9 +174,9 @@ return nil."
      (paused
       (asyncloop-log loop "Loop paused"))
      ;; (This clause only applies if :immediate-break-on-user-activity nil.
-     ;; If t, we never arrive here anyway.)  User just did I/O, so free a
-     ;; moment for Emacs to respond to it.  Because of the idle timer, this
-     ;; moment may be extended indefinitely.
+     ;; If t, we never arrive here anyway.)
+     ;; User just did I/O, so free a moment for Emacs to respond to it.
+     ;; Because of the idle timer, this moment may be extended indefinitely.
      ((input-pending-p)
       (setf scheduled t)
       (named-timer-idle-run timer 1.0 nil #'asyncloop-resume-1 loop))
@@ -190,7 +188,7 @@ return nil."
      (t
       (setq asyncloop-recursion-ctr 0)
       (setf scheduled t)
-      (named-timer-idle-run timer .05 nil #'asyncloop-resume-1 loop)))
+      (named-timer-idle-run timer 0.05 nil #'asyncloop-resume-1 loop)))
     (if immediate-break-on-user-activity
         ;; Say "no problems" to `while-no-input'
         nil
@@ -253,34 +251,29 @@ invocation of `asyncloop-resume-1' on an idle timer."
     (setf just-launched nil)
     (setf paused nil)
     (setf scheduled nil)
-    (if remainder
-        (progn
-          (asyncloop-notify-simultaneity loop)
-          (if immediate-break-on-user-activity
-              (let ((result (while-no-input (asyncloop-chomp loop))))
-                (cond
-                 ((eq t result)
-                  ;; User just did I/O, so free a moment for Emacs to
-                  ;; respond to it.  Because it's on an idle timer, this
-                  ;; moment may be extended indefinitely.
-                  (setf scheduled t)
-                  (named-timer-idle-run timer 1.0 nil #'asyncloop-resume-1 loop))
-                 ((not (null result))
-                  (error "Asyncloop gave an unexpected result: %s" result))))
-            ;; Without `while-no-input', something should be able to interrupt
-            ;; a hung function, so allow C-g to do so.  I tried `with-timeout'
-            ;; but found it unreliable in the context of several loops active
-            ;; at the same time.
-            ;;
-            ;; The drawback is that C-g could hit at the exactly wrong time,
-            ;; even for a loop that has no flaws.  We implicitly promised the
-            ;; user in the docstring that the function would not be
-            ;; interrupted.  So when it happens, cancel the whole loop, as
-            ;; that'll probably lead to more correctness.
-            (when (null (with-local-quit (asyncloop-chomp loop)))
-              (setf remainder nil)
-              (asyncloop-log loop "Interrupted by C-g, cancelling"))))
-      (asyncloop-log loop "Scheduled loop found cleared, doing nothing"))))
+    (if (null remainder)
+        (asyncloop-log loop "Scheduled loop found cleared, doing nothing")
+      (asyncloop-notify-simultaneity loop)
+      (if immediate-break-on-user-activity
+          (when (while-no-input (asyncloop-chomp loop))
+            ;; User just did I/O, so free a moment for Emacs to
+            ;; respond to it.  Because it's on an idle timer, this
+            ;; moment may be extended indefinitely.
+            (setf scheduled t)
+            (named-timer-idle-run timer 1.0 nil #'asyncloop-resume-1 loop))
+        ;; Without `while-no-input', something should be able to interrupt
+        ;; a hung function, so allow C-g to do so.  I tried `with-timeout'
+        ;; but found it unreliable in the context of several loops active
+        ;; at the same time.
+        ;;
+        ;; The drawback is that C-g could hit at the exactly wrong time,
+        ;; even for a loop that has no flaws.  We implicitly promised the
+        ;; user in the docstring that the function would not be
+        ;; interrupted.  So when it happens, cancel the whole loop, as
+        ;; that'll probably lead to more correctness.
+        (when (null (with-local-quit (asyncloop-chomp loop)))
+          (setf remainder nil)
+          (asyncloop-log loop "Interrupted by C-g, cancelling"))))))
 
 ;;;###autoload
 (cl-defun asyncloop-run
@@ -354,8 +347,8 @@ met (in the style of a while-loop), have it push some symbol such
 as t onto the result of the accessor `asyncloop-remainder', which
 has the effect of ensuring that the same function will run again:
 
-  (unless ...some-condition-that-means-done...
-    (push t (asyncloop-remainder loop)))
+  \(unless ...some-condition-that-means-done...
+    \(push t \(asyncloop-remainder LOOP-OBJECT)))
 
 As always with while-loop patterns, take a moment to ensure that
 there is no way it will repeat forever.  If it is meant to
@@ -363,19 +356,20 @@ decrement an external counter by `cl-decf' or consume a list one
 item at a time by `pop', do that earlier than the above form.
 
 The accessor `asyncloop-remainder' returns the list of functions
-left to run.  You can manipulate it however you like, but note
-that it includes the function currently being run, as the first
-element, and it will undergo a `pop' right after the function
-completes.  (That's why the above form works: the symbol t is
-just a placeholder to absorb the coming `pop'.)  Somewhat
+left to run.  You can manipulate the list however you like, but
+note that it includes the function currently being run, as the
+first element, and it will undergo a `pop' right after the
+function completes.  (That's why the above form works: the symbol
+t is just a placeholder to absorb the coming `pop'.)  Somewhat
 nonintuitive, but it had to be designed this way for robustness
-to interruption by `while-no-input'.
+to interruption by user activity.
 
 A takeaway: if you wish to set the list to something entirely
-different via `setf', use a placeholder as first element!
+different via `setf', use a placeholder like t as first element!
 
-Optional string LOG-BUFFER-NAME controls whether to create a
-buffer of log messages, and if so, its name.
+Finally, optional string LOG-BUFFER-NAME says to create a buffer
+of log messages with that name.  One of the major features of
+this library, so use it!
 
 It does not matter what the functions in FUNS return, but the
 log buffer prints the return values, so by returning something
@@ -383,9 +377,9 @@ interesting (I suggest a short string constructed by `format'),
 you can improve your debugging experience."
   (declare (indent defun))
   (cl-assert funs)
-  ;; TODO: why this assertion errors in normal use?
-  ;; (dolist (fun funs)
-  ;;   (cl-assert (functionp fun)))
+  (dolist (fun funs)
+    (unless (functionp fun)
+      (error "Not known as a function: %s. Did you define it beforehand?" fn)))
 
   ;; Name it as a deterministic hash of the input, ensuring that
   ;; next call with the same input can recognize that it was
@@ -429,24 +423,24 @@ you can improve your debugging experience."
                 "Loop was paused, must be explicitly unpaused via `asyncloop-resume' or `asyncloop-cancel'")
             (when on-interrupt-discovered
               (asyncloop-log loop
-                "Loop had met an error, calling ON-INTERRUPT-DISCOVERED")
+                "Loop had been interrupted, calling ON-INTERRUPT-DISCOVERED")
               (with-local-quit 
                 (asyncloop-clock-funcall loop on-interrupt-discovered)))
             (if (null remainder)
                 (asyncloop-log loop "Cancelled by ON-INTERRUPT-DISCOVERED")
               (asyncloop-log loop
-                "Loop had met an error, attempting to resume.  Functions left to run: %S"
+                "Loop had been interrupted, attempting to resume.  Functions left to run: %S"
                 remainder)
               (setf scheduled t)
               (named-timer-idle-run timer 0.05 nil #'asyncloop-resume-1 loop))))
 
+         ;; Launch anew the full loop
          (t
-          ;; Launch anew the full loop
           (setf remainder funs)
           (setf starttime (current-time))
           (asyncloop-log loop "Loop started")
           (setf scheduled t)
-          (named-timer-idle-run timer .05 nil #'asyncloop-resume-1 loop)))))
+          (named-timer-idle-run timer 0.05 nil #'asyncloop-resume-1 loop)))))
     loop))
 
 (set-advertised-calling-convention
