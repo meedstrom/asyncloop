@@ -14,10 +14,10 @@
 
 * News
 - 2023-11-13 (Version 0.4.2)
-  - Always let users cancel what Emacs is doing with C-g if nothing else
+  - Always let users cancel what Emacs is doing with C-g, if nothing else
   - Notify when there are simultaneous asyncloops, so user doesn't conclude that one is stuck
 - 2023-11-10 (Version 0.4)
-  - Eliminate 90%+ of performance overhead.  Blazingly fast now!
+  - Eliminate 90%+ of performance overhead.  Blazing fast now!
   - Introduce =:immediate-break-on-user-activity=, which uses =while-no-input= for true instant response to user activity
   - Introduce =asyncloop-pause= and =asyncloop-resume=
 
@@ -52,13 +52,13 @@ Enter this library.  It helps you run a series of functions without hanging Emac
   
 *Usage*
 
-The API consists mainly of =(asyncloop-run)=, consult its docstring.  You may also find reason to call:
+The API consists mainly of =asyncloop-run=, consult its docstring.  You may also find reason to call:
 
 - =(asyncloop-remainder LOOP)=: access state of the running loop, so you can modify it with =setf=, =push=, =delq= etc.
 - =(asyncloop-cancel LOOP)=: cancel the running loop
 - =(asyncloop-pause LOOP)=: pause the running loop
 - =(asyncloop-resume LOOP)=: resume the loop
-- =(asyncloop-log LOOP &rest ARGS)=: send message to the debug buffer.  Note that it's usually more elegant for each mini-function to just pass an informative return value, as that is automatically printed in the debug buffer.
+- =(asyncloop-log LOOP &rest ARGS)=: send message to the log buffer.  Note that it's usually more elegant for each mini-function to just pass an informative return value, as that is automatically printed in the log buffer.
 
 For an example usage, find the use of "asyncloop-run" inside [[https://github.com/meedstrom/deianira/blob/master/deianira.el][deianira.el]], which gave birth to this library.
 
@@ -68,7 +68,7 @@ What to include in each mini-function?  Consider
 
 - writing a general sanity check and calling it at the top of each function
 - writing a cleanup function and calling it whenever you call =asyncloop-cancel=
-- doing the heavy or bug-prone calculations inside some let-bindings and then side-effects at the end
+- doing the heavy or bug-prone calculations inside some let-bindings, and then the side-effects at the end
   
 *Anti-wishlist (won't implement)*
 
@@ -80,11 +80,11 @@ What to include in each mini-function?  Consider
 
 The following example snippet shows a way you can write your own solution.
 
-When I first wrote asyncloop, I didn't know about either =input-pending-p= or =while-no-input=, which would have been great to know.  Emacs Lisp is full of power tools laying forgotten under sofa cushions.
+When I first wrote asyncloop, I didn't know about either =input-pending-p= or =while-no-input=, which would've helped a lot.  Emacs Lisp is full of power tools laying forgotten under the sofa cushions.
 
-Now, the intent of this package is still to give you a nice DX (developer experience) and reduce boilerplate.
+Now, the intent of this package is to give you a nice DX (developer experience) and reduce boilerplate.  But let me also stand on the soapbox of this README so less people have to retrace my steps!
 
-But no matter how popular this package gets, I can stand on the soapbox of this README so less people have to retrace my steps!  Here's how you do it!
+Here's how you do it!
 
 *** Your very own asyncloop in three s-exps
 
@@ -102,7 +102,7 @@ But no matter how popular this package gets, I can stand on the soapbox of this 
   nil)
 
 (defun resume (queue)
-  (when (while-no-input (eat queue))
+  (when (while-no-input (with-local-quit (eat queue)))
     (message "Pausing for a moment")
     (run-with-idle-timer 1 nil #'resume queue)))
 #+end_src
@@ -119,7 +119,7 @@ But no matter how popular this package gets, I can stand on the soapbox of this 
                   (lambda () (sit-for .4) (message "zab"))
                   (lambda () (sit-for .4) (message "rab"))
                   (lambda () (sit-for .4) (message "oof"))))
-  (setq my-queue (queue-create :fns full-fns)))
+  (setq my-queue (queue-create)))
 
 ;; Test like this. Watch *Messages* and try to interrupt with some input.
 (progn  
@@ -142,6 +142,8 @@ The function =eat= uses recursion, which is cool and all but risks tripping =max
         (setq recursion-ctr 0)
         (run-with-timer .01 nil #'eat queue)
         nil)
-    (message "All done"))
-  nil)
+    (message "All done")
+    nil))
 #+end_src
+
+Why not just use the timer like that for every call?  That's what I did at first, and found that timers have some overhead -- I don't know if it's extra CPU cycles or just extra waits, but it adds up to a significant slowdown for the whole loop.  By limiting it to once per 100 calls, 99% of that overhead is eliminated.
