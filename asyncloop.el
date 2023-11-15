@@ -132,8 +132,11 @@ Expected format:
   "Stop asyncloop LOOP from executing more queued functions.
 Ensure the loop will restart fresh on the next call to
 `asyncloop-run'."
-  (setf (asyncloop-remainder loop) nil)
-  (asyncloop-log loop "Loop told to cancel"))
+  (asyncloop-with-slots (remainder paused) loop
+    (setf remainder nil)
+    (setf paused nil)
+    (setf just-launched nil)
+    (asyncloop-log loop "Loop told to cancel")))
 
 (defvar asyncloop-recursion-ctr 0
   "How deeply `asyncloop-chomp' has recursed.")
@@ -230,8 +233,9 @@ funcalls in that they always set `inhibit-quit' t."
   (asyncloop-with-slots (paused scheduled timer) loop
     (asyncloop-log loop "Loop told to resume")
     (setf paused nil)
+    (setf just-launched nil)
     (setf scheduled t)
-    (named-timer-idle-run timer .05 nil #'asyncloop-resume-1 loop)))
+    (named-timer-idle-run timer 0.05 nil #'asyncloop-resume-1 loop)))
 
 (defun asyncloop-resume-1 (loop)
   "Resume executing asyncloop LOOP.
@@ -413,22 +417,20 @@ you can improve your debugging experience."
          ;; Resuming an apparently half-done loop
          ((and remainder (not (equal remainder funs)))
           (if paused
-              (progn
-                (asyncloop-log loop
-                  "Resuming paused loop.  Functions left to run: %S"
-                  remainder)
-                (setf scheduled t)
-                (named-timer-idle-run timer .05 nil #'asyncloop-resume-1 loop))
+              (asyncloop-log loop
+                "Loop was paused, must be explicitly unpaused via `asyncloop-resume' or `asyncloop-cancel'")
             (when on-interrupt-discovered
+              (asyncloop-log loop
+                "Loop had met an error, calling ON-INTERRUPT-DISCOVERED")
               (with-local-quit 
                 (asyncloop-clock-funcall loop on-interrupt-discovered)))
             (if (null remainder)
                 (asyncloop-log loop "Cancelled by ON-INTERRUPT-DISCOVERED")
               (asyncloop-log loop
-                "Loop had been interrupted, resuming.  Functions left to run: %S"
+                "Loop had met an error, attempting to resume.  Functions left to run: %S"
                 remainder)
               (setf scheduled t)
-              (named-timer-idle-run timer .05 nil #'asyncloop-resume-1 loop))))
+              (named-timer-idle-run timer 0.05 nil #'asyncloop-resume-1 loop))))
 
          (t
           ;; Launch anew the full loop
