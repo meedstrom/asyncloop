@@ -93,7 +93,15 @@ Return nil if the command timed out, and return the log message
 otherwise."
   (let ((fn-name (if (symbolp fn) fn "lambda"))
         (then (current-time))
-        (result (funcall fn loop)))
+        (result (condition-case err
+                    (funcall fn loop)
+                  (error
+                   (asyncloop-log loop "Function %S met an error: %s" fn err)
+                   (signal (car err) (cdr err)))
+                  ;; REVIEW: See if this works, and consider if it's necessary
+                  (quit
+                   (asyncloop-log loop "Function %S hit by a quit: %s" fn err)
+                   (signal (car err) (cdr err))))))
     (asyncloop-log loop
       "Took %.2fs: %s: %s" (float-time (time-since then)) fn-name result)))
 
