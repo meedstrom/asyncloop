@@ -19,7 +19,7 @@
 
 ;; Author: Martin Edström <meedstrom91@gmail.com>
 ;; Created: 2022-10-30
-;; Version: 0.4.5
+;; Version: 0.4.6-snapshot
 ;; Keywords: tools
 ;; Homepage: https://github.com/meedstrom/asyncloop
 ;; Package-Requires: ((emacs "28") (named-timer "0.1"))
@@ -96,15 +96,16 @@ Finally, return the formatted string so you can pass it on to
   (ignore-errors
     (cl-loop for (_id . loop) in asyncloop-objects
              do
-             (asyncloop-log loop "All loops reset")
-             (asyncloop-cancel loop)))
+             (asyncloop-cancel loop)
+             (asyncloop-log loop "All loops reset")))
   (setq asyncloop-objects nil)
   (if (derived-mode-p 'asyncloop-log-mode)
       (message "All asyncloops reset due to quit in buffer %s" (buffer-name))
     (message "All asyncloops reset")))
 
 (defun asyncloop-keyboard-quit ()
-  "Wrapper for `keyboard-quit' that also cancels all loops."
+  "Wrapper for `keyboard-quit' that also cancels all loops.
+Only meant to be bound in asyncloop log buffers."
   (interactive)
   (unwind-protect
       (asyncloop-reset-all)
@@ -193,7 +194,7 @@ conclude that it got stuck because it seems to do no work."
 (defun asyncloop-chomp (loop)
   "Run functions that remain in LOOP, one at a time."
   (asyncloop-with-slots (remainder starttime scheduled timer-id paused immediate-break-on-user-activity) loop
-    ;; In case the last function was interrupted after it pushed t on REMAINDER
+    ;; In case the last function pushed t on REMAINDER and then got interrupted
     (when (not (functionp (car remainder)))
       (pop remainder))
     (asyncloop-clock-funcall loop (car remainder))
@@ -397,7 +398,7 @@ you can improve your debugging experience."
          (immediate-break-on-user-activity (or immediate-break-on-user-activity
                                                immediate-break-on-input))
          ;; Name it as a deterministic hash of the input, ensuring that the
-         ;; next call with the same input can see that it was already called.
+         ;; next call with the same input can see that it was already called
          (id (abs (sxhash (list funs
                                 on-interrupt-discovered
                                 log-buffer-name
@@ -438,7 +439,7 @@ you can improve your debugging experience."
             (when on-interrupt-discovered
               (asyncloop-log loop
                 "Loop had been interrupted, calling ON-INTERRUPT-DISCOVERED")
-              (with-local-quit 
+              (with-local-quit
                 (asyncloop-clock-funcall loop on-interrupt-discovered)))
             (if (null remainder)
                 (asyncloop-log loop "Cancelled by ON-INTERRUPT-DISCOVERED")
