@@ -124,67 +124,52 @@ Only meant to be bound in asyncloop log buffers."
 
 (defun asyncloop-clock-funcall (loop fn)
   "Run FN; log result and time elapsed to LOOP's log buffer."
-  (let ((fn-name (if (symbolp fn) fn "lambda"))
+  (let ((fn-name (if (symbolp fn) fn 'lambda))
         (then (current-time))
         (result (condition-case err
                     (funcall fn loop)
-                  (t
-                   (asyncloop-log loop "During %s: %s" fn err)
+                  ((t debug)
+                   (asyncloop-log loop "During %S: %S" fn-name err)
                    (signal (car err) (cdr err))))))
     (asyncloop-log loop
-      "Took %.2fs: %s: %s" (float-time (time-since then)) fn-name result)))
+      "Took %.2fs: %S: %s" (float-time (time-since then)) fn-name result)))
 
 (defun asyncloop-cancel (loop &optional quietly)
   "Stop asyncloop LOOP from executing more queued functions.
 Ensure the loop will restart fresh on the next call to
 `asyncloop-run'.
 
-If optional argument QUIETLY is non-nil, don't log the
-cancellation.  You should have a good reason to use this."
-  (asyncloop-with-slots (remainder paused) loop
+With optional argument QUIETLY, don't log the cancellation."
+  (asyncloop-with-slots (remainder paused scheduled just-launched) loop
+    (unless quietly
+      (asyncloop-log loop "Loop told to cancel"))
     (setf remainder nil)
     (setf paused nil)
     (setf just-launched nil)
-    (unless quietly
-      (asyncloop-log loop "Loop told to cancel"))))
+    (setf scheduled nil)))
 
 (defun asyncloop-pause (loop)
   "Pause LOOP.
 Tip: by saving the output of `asyncloop-run' to a variable, you
 have a pointer to the loop object, which you can pass to this
 function and then later to `asyncloop-resume'."
-  (asyncloop-with-slots (paused timer-id just-launched) loop
+  (asyncloop-with-slots (paused scheduled timer-id) loop
     (asyncloop-log loop "Loop told to pause")
     (setf paused t)
+    (setf scheduled nil)
     (named-timer-cancel timer-id)))
-
-(defun asyncloop-scheduled-loops ()
-  "Check if some loop is scheduled to run.
-Return an alist associating active loop IDs (as car) with the
-time they have left on their timers, in seconds (as cdr).  The
-alist is sorted by soonest first.  If no loops are scheduled,
-return nil."
-  (cl-loop
-   with result = nil
-   for (id . loop) in asyncloop-objects
-   for some-timer = (cl-find (named-timer-get (asyncloop-timer-id loop))
-                             timer-idle-list)
-   when some-timer
-   collect (cons id (- (timer-until some-timer nil)))
-   into result
-   finally return (cl-sort result #'< :key #'cdr)))
 
 (defun asyncloop-notify-simultaneity (this-loop)
   "Write in all loops' logs that multiple loops are active.
 This is done so when someone watches one of the logs, they don't
 conclude that it got stuck because it seems to do no work."
   (cl-loop
-   with others = (asyncloop-scheduled-loops)
-   with active-loops = nil
-   for (id . _secs) in others
-   collect (alist-get id asyncloop-objects) into active-loops
+   with others = nil
+   for (_ . loop) in asyncloop-objects
+   when (member (named-timer-get (asyncloop-timer-id loop)) timer-idle-list)
+   collect loop into others
    finally do (when others
-                (dolist (loop (cons this-loop active-loops))
+                (dolist (loop (cons this-loop others))
                   (asyncloop-log loop
                     "Two or more asyncloops running, please wait...")))))
 
@@ -236,30 +221,35 @@ Normally, you are meant to call `asyncloop-resume', which see."
   (asyncloop-with-slots (remainder just-launched paused scheduled immediate-break-on-user-activity timer-id) loop
     (setf just-launched nil)
     (setf paused nil)
-    (setf scheduled nil)
-    (if (null remainder)
-        (asyncloop-log loop "Scheduled loop found cleared, doing nothing")
-      (asyncloop-notify-simultaneity loop)
-      (if immediate-break-on-user-activity
-          (when (while-no-input (asyncloop-chomp loop))
-            ;; User just did I/O, so free a moment for Emacs to
-            ;; respond to it.  Because it's on an idle timer, this
-            ;; moment may be extended indefinitely.
-            (setf scheduled t)
-            (named-timer-idle-run timer-id 1.0 nil #'asyncloop-resume-1 loop))
-        ;; Without `while-no-input', something should be able to interrupt
-        ;; a hung function, so allow C-g to do so.  I tried `with-timeout'
-        ;; but found it unreliable in the context of several loops active
-        ;; at the same time.
-        ;;
-        ;; The drawback is that C-g could hit at exactly the wrong time,
-        ;; interrupting a function at an non-ideal point in its execution.
-        ;; We implicitly promised the user in the docstring that the function
-        ;; would not be interrupted.  So when it happens, cancel the whole
-        ;; loop, as that'll probably lead to more correctness.
-        (when (null (with-local-quit (asyncloop-chomp loop)))
-          (asyncloop-cancel loop 'quietly)
-          (asyncloop-log loop "Interrupted by C-g, cancelling"))))))
+    ;; Don't proceed if in fact, `asyncloop-cancel' was called -- timers with
+    ;; zero time left seem to have a habit of executing even though
+    ;; `cancel-timer' was called, which is how this condition ever obtains.
+    (if (not scheduled)
+        (asyncloop-log loop "I was de-scheduled, quit yer yapping")
+      (setf scheduled nil)
+      (if (null remainder)
+          (asyncloop-log loop "Scheduled loop found cleared, doing nothing")
+        (asyncloop-notify-simultaneity loop)
+        (if immediate-break-on-user-activity
+            (when (while-no-input (asyncloop-chomp loop))
+              ;; User just did I/O, so free a moment for Emacs to
+              ;; respond to it.  Because it's on an idle timer, this
+              ;; moment may be extended indefinitely.
+              (setf scheduled t)
+              (named-timer-idle-run timer-id 1.0 nil #'asyncloop-resume-1 loop))
+          ;; Without `while-no-input', something should be able to interrupt
+          ;; a hung function, so allow C-g to do so.  I tried `with-timeout'
+          ;; but found it unreliable in the context of several loops active
+          ;; at the same time.
+          ;;
+          ;; The drawback is that C-g could hit at exactly the wrong time,
+          ;; interrupting a function at a non-ideal point in its execution.
+          ;; We implicitly promised the user in the docstring that the function
+          ;; would not be interrupted.  So when it happens, cancel the whole
+          ;; loop, as that'll probably lead to more correctness.
+          (when (null (with-local-quit (asyncloop-chomp loop)))
+            (asyncloop-cancel loop 'quietly)
+            (asyncloop-log loop "Interrupted by C-g, cancelling")))))))
 
 (defun asyncloop-resume (loop)
   "Prep asyncloop LOOP to resume when Emacs has a moment.
