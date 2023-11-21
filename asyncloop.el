@@ -124,13 +124,13 @@ Only meant to be bound in asyncloop log buffers."
 
 (defun asyncloop-clock-funcall (loop fn)
   "Run FN; log result and time elapsed to LOOP's log buffer."
-  (let ((fn-name (if (symbolp fn) fn 'lambda))
-        (then (current-time))
-        (result (condition-case err
-                    (funcall fn loop)
-                  ((t debug)
-                   (asyncloop-log loop "During %S: %S" fn-name err)
-                   (signal (car err) (cdr err))))))
+  (let* ((fn-name (if (symbolp fn) fn 'lambda))
+         (then (current-time))
+         (result (condition-case err
+                     (funcall fn loop)
+                   ((t debug)
+                    (asyncloop-log loop "During %S: %S" fn-name err)
+                    (signal (car err) (cdr err))))))
     (asyncloop-log loop
       "Took %.2fs: %S: %s" (float-time (time-since then)) fn-name result)))
 
