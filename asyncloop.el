@@ -205,7 +205,7 @@ conclude that it got stuck because it seems to do no work."
      (t
       (setq asyncloop-recursion-ctr 0)
       (setf scheduled t)
-      (named-timer-idle-run timer-id 0.05 nil #'asyncloop-resume-1 loop)))
+      (named-timer-idle-run timer-id 0 nil #'asyncloop-resume-1 loop)))
     (if immediate-break-on-user-activity
         ;; Say "no problems" to `while-no-input'
         nil
@@ -270,7 +270,7 @@ setting `inhibit-quit' t."
     (setf paused nil)
     (setf just-launched nil)
     (setf scheduled t)
-    (named-timer-idle-run timer-id 0.05 nil #'asyncloop-resume-1 loop)))
+    (named-timer-idle-run timer-id 0 nil #'asyncloop-resume-1 loop)))
 
 ;;;###autoload
 (cl-defun asyncloop-run
@@ -370,8 +370,7 @@ different via `setf', include t as first element:
          \(list t #'function-1 #'function-2 #'function-3))
 
 Finally, optional string LOG-BUFFER-NAME says to create a buffer
-of log messages with that name.  One of the major features of
-this library, so use it!
+of log messages with that name.
 
 It does not matter what the functions in FUNS return, but the
 log buffer prints the return values, so by returning something
@@ -437,7 +436,7 @@ you can improve your debugging experience."
                 "Loop had been interrupted, attempting to resume.  Functions left to run: %S"
                 remainder)
               (setf scheduled t)
-              (named-timer-idle-run timer-id 0.05 nil #'asyncloop-resume-1 loop))))
+              (named-timer-idle-run timer-id 0 nil #'asyncloop-resume-1 loop))))
 
          ;; Launch anew the full loop
          (t
@@ -445,7 +444,7 @@ you can improve your debugging experience."
           (setf starttime (current-time))
           (asyncloop-log loop "Loop started")
           (setf scheduled t)
-          (named-timer-idle-run timer-id 0.05 nil #'asyncloop-resume-1 loop)))))
+          (named-timer-idle-run timer-id 0 nil #'asyncloop-resume-1 loop)))))
     loop))
 
 (set-advertised-calling-convention
