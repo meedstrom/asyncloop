@@ -38,7 +38,6 @@
 
 (cl-defstruct (asyncloop (:constructor asyncloop-create)
                          (:copier nil))
-  ;; funs
   starttime
   log-buffer
   immediate-break-on-user-activity
@@ -405,9 +404,8 @@ you can improve your debugging experience."
               (setf (alist-get id asyncloop-objects)
                     (asyncloop-create
                      :id id
-                     ;; :funs funs
                      :immediate-break-on-user-activity immediate-break-on-user-activity
-                     ;; TODO: Recreate log buffer?
+                     ;; REVIEW: Recreate log buffer after user kills?
                      :log-buffer
                      (when log-buffer-name
                        (with-current-buffer (get-buffer-create log-buffer-name)
