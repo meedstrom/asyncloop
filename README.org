@@ -46,9 +46,7 @@ Enter this library.  It helps you run a series of functions without hanging Emac
 
 - easy profiling: check the log buffer to see how long each of your functions take
 
-- made with 250 lines of code
-
-  - and uses [[https://github.com/DarwinAwardWinner/emacs-named-timer][named-timer]], an excellent 50-line library
+- made with 250 lines of code, no dependencies
   
 *Usage*
 
