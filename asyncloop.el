@@ -34,26 +34,17 @@
 ;;; Code:
 
 (require 'cl-lib)
-(require 'subr-x)
 
 (cl-defstruct (asyncloop (:constructor asyncloop-create)
                          (:copier nil))
   starttime
   log-buffer
   immediate-break-on-user-activity
-  id
   (timer (make-vector 10 nil))
   (paused nil)
   (remainder nil)
   (scheduled nil)
   (just-launched nil))
-
-(defvar asyncloop-objects nil
-  "Alist identifying unique asyncloop objects.
-Expected format:
-   ((ID1 . OBJECT1)
-    (ID2 . OBJECT2)
-    ...)")
 
 (defmacro asyncloop-with-slots (spec-list object &rest body)
   "Like eieio's `with-slots', but for our struct type.
@@ -65,6 +56,13 @@ Bind SPEC-LIST lexically to slot values in OBJECT, and execute BODY."
          collect `(,slot (,(intern (concat "asyncloop-" (symbol-name slot)))
                           ,object)))
      ,@body))
+
+(defvar asyncloop-objects nil
+  "Alist identifying unique asyncloop objects.
+Expected format:
+   ((ID1 . OBJECT1)
+    (ID2 . OBJECT2)
+    ...)")
 
 (defun asyncloop-log (loop &rest args)
   "Log a message to the log buffer associated with LOOP.
@@ -80,10 +78,10 @@ Finally, return the formatted string so you can pass it on to
         (goto-char (point-max))
         (insert (format-time-string "%T: ") text)
         (newline))
-      ;; Improve DX.  Some emacsen look choppy when you watch the log buffer
+      ;; Improve UX.  Some emacsen look choppy when you watch the log buffer
       ;; because they don't redisplay on every insertion, instead batching
       ;; updates in chunks of 10-20 lines.  This reduces that choppiness.
-      (when (get-buffer-window buf)
+      (when (get-buffer-window buf 'visible)
         (redisplay)))
     ;; Allow the convenient sexp (warn "%s" (asyncloop-log loop "msg"))
     text))
@@ -101,7 +99,7 @@ Finally, return the formatted string so you can pass it on to
      else do (asyncloop-log loop "All asyncloops reset")))
   (setq asyncloop-objects nil))
 
-;; TODO: Only cancel the loop in question
+;; TODO: Cancel only the relevant loop
 (defun asyncloop-keyboard-quit ()
   "Wrapper for `keyboard-quit' that also cancels all loops.
 Only meant to be bound in asyncloop log buffers."
@@ -115,11 +113,10 @@ Only meant to be bound in asyncloop log buffers."
     (define-key map [remap keyboard-quit] #'asyncloop-keyboard-quit)
     map))
 
-(define-derived-mode asyncloop-log-mode special-mode
-  "Asyncloop-Log"
+(define-derived-mode asyncloop-log-mode special-mode "Asyncloop-Log"
+  (set (make-local-variable 'window-point-insertion-type) t)
   (setq truncate-lines t)
-  (setq buffer-read-only nil)
-  (set (make-local-variable 'window-point-insertion-type) t))
+  (setq buffer-read-only nil))
 
 (defun asyncloop-clock-funcall (loop fn)
   "Run FN; log result and time elapsed to LOOP's log buffer."
@@ -129,6 +126,10 @@ Only meant to be bound in asyncloop log buffers."
                      (funcall fn loop)
                    ((t debug)
                     (asyncloop-log loop "During %S: %S" fn-name err)
+                    (when (asyncloop-log-buffer loop)
+                      ;; Ensure that the log remains visible even as the error
+                      ;; buffer is displayed
+                      (pop-to-buffer (asyncloop-log-buffer loop)))
                     (signal (car err) (cdr err))))))
     (asyncloop-log loop
       "Took %.2fs: %S: %s" (float-time (time-since then)) fn-name result)))
@@ -139,7 +140,7 @@ Ensure the loop will restart fresh on the next call to
 `asyncloop-run'.
 
 With optional argument QUIETLY, don't log the cancellation."
-  (asyncloop-with-slots (remainder paused scheduled just-launched) loop
+  (asyncloop-with-slots (remainder scheduled timer paused just-launched) loop
     (unless quietly
       (asyncloop-log loop "Loop told to cancel"))
     (setf remainder nil)
@@ -147,16 +148,18 @@ With optional argument QUIETLY, don't log the cancellation."
     (cancel-timer timer)
     ;; Bonus cleanup
     (setf paused nil)
-    ;; REVIEW: necessary?
-    ;; (setf just-launched nil)
     (cl-assert (not just-launched))))
 
 (defun asyncloop-pause (loop)
   "Pause LOOP.
+This also prevents `asyncloop-run' from re-launching it.  The
+only ways to undo the pause-state are by calling
+`asyncloop-resume' or `asyncloop-cancel'.
+
 Tip: by saving the output of `asyncloop-run' to a variable, you
 have a pointer to the loop object, which you can pass to this
 function and then later to `asyncloop-resume'."
-  (asyncloop-with-slots (paused scheduled just-launched timer) loop
+  (asyncloop-with-slots (timer paused scheduled just-launched) loop
     (asyncloop-log loop "Loop told to pause")
     (cancel-timer timer)
     (setf paused t)
@@ -166,7 +169,7 @@ function and then later to `asyncloop-resume'."
     (cl-assert (not just-launched))))
 
 (defun asyncloop-resume (loop)
-  "Prep asyncloop LOOP to resume when Emacs has a moment."
+  "Tell asyncloop LOOP to resume when Emacs has a moment free."
   (asyncloop-with-slots (paused just-launched) loop
     (setf paused nil)
     (asyncloop-log loop "Loop told to resume")
@@ -235,11 +238,11 @@ Do not call this directly!  Normally, end users are meant to call
 `asyncloop-resume', which see."
   (asyncloop-with-slots (remainder just-launched scheduled immediate-break-on-user-activity) loop
     (setf just-launched nil)
-    ;; Don't proceed if descheduled by `asyncloop-pause', or if some other
-    ;; mystery factor got this to execute again -- it's not just that timers
-    ;; with zero time left seem to have a habit of executing even though
-    ;; `cancel-timer' was called, there is also some sort of spooky action
-    ;; that executes this function for no reason occasionally.
+    ;; Don't proceed if descheduled by `asyncloop-pause', or if some other mystery
+    ;; factor got this to execute again -- it's not just that timers with zero
+    ;; time left seem to have a habit of executing even though `cancel-timer'
+    ;; was called, there is also some sort of spooky action worthy of the
+    ;; X-Files that executes this function for no reason occasionally.
     (if (not scheduled)
         (asyncloop-log loop
           "Unscheduled timer activation. Hands off the wheel, ghost!")
@@ -251,10 +254,11 @@ Do not call this directly!  Normally, end users are meant to call
             (when (while-no-input (asyncloop-chomp loop))
               ;; User just did I/O, so free a moment for Emacs to respond
               (asyncloop-schedule loop 1))
-          ;; Without `while-no-input', something should be able to interrupt
-          ;; a hung function, so allow C-g to do so.  I tried `with-timeout'
-          ;; but found it unreliable in the context of several loops active
-          ;; at the same time.
+          ;; Without `while-no-input', something should be able to interrupt a
+          ;; hung function, so allow C-g to do so.  I tried `with-timeout' but
+          ;; found it unreliable in the context of several loops active at the
+          ;; same time (not only as the docstring warns that it doesn't run
+          ;; when it should, it also runs when it shouldn't).
           ;;
           ;; The drawback is that C-g could hit at exactly the wrong time,
           ;; interrupting a function at a non-ideal point in its execution.
@@ -283,10 +287,8 @@ conclude that it got stuck because it seems to do no work."
 (cl-defun asyncloop-run
     (funs &key
           immediate-break-on-user-activity
-          immediate-break-on-input
           on-interrupt-discovered
-          log-buffer-name
-          debug-buffer-name)
+          log-buffer-name)
   "Attempt to run the series of functions in list FUNS.
 Execute them in sequence, but pause on user activity to keep
 Emacs feeling snappy.
@@ -377,7 +379,8 @@ different via `setf', include t as first element:
          \(list t #'function-1 #'function-2 #'function-3))
 
 Finally, optional string LOG-BUFFER-NAME says to create a buffer
-of log messages with that name.
+of log messages with that name.  A reasonable value is
+\"*your-package*\".
 
 It does not matter what the functions in FUNS return, but the
 log buffer prints the return values, so by returning something
@@ -388,12 +391,7 @@ you can improve your debugging experience."
   (dolist (fn funs)
     (unless (functionp fn)
       (error "Not a function or not yet defined as such: %s" fn)))
-  (let* (;; Handle deprecated calling convention for now
-         (log-buffer-name (or log-buffer-name
-                              debug-buffer-name))
-         (immediate-break-on-user-activity (or immediate-break-on-user-activity
-                                               immediate-break-on-input))
-         ;; Name it as a deterministic hash of the input, ensuring that the
+  (let* (;; Name it as a deterministic hash of the input, ensuring that the
          ;; next call with the same input can see that it was already called
          (id (abs (sxhash (list funs
                                 on-interrupt-discovered
@@ -403,7 +401,6 @@ you can improve your debugging experience."
           (or (alist-get id asyncloop-objects)
               (setf (alist-get id asyncloop-objects)
                     (asyncloop-create
-                     :id id
                      :immediate-break-on-user-activity immediate-break-on-user-activity
                      ;; REVIEW: Recreate log buffer after user kills?
                      :log-buffer
@@ -411,10 +408,6 @@ you can improve your debugging experience."
                        (with-current-buffer (get-buffer-create log-buffer-name)
                          (asyncloop-log-mode)
                          (current-buffer))))))))
-    (when immediate-break-on-input
-      (warn "Deprecated keyword name will be removed Dec 2023: :immediate-break-on-input.  Use :immediate-break-on-user-activity."))
-    (when debug-buffer-name
-      (warn "Deprecated keyword name will be removed Dec 2023: :debug-buffer-name.  Use :log-buffer-name."))
     (asyncloop-with-slots (remainder scheduled just-launched starttime paused) loop
       (cond
        ;; Ensure that being triggered by several simultaneous hooks won't spam
@@ -450,18 +443,6 @@ you can improve your debugging experience."
         (asyncloop-schedule loop)
         (asyncloop-log loop "Loop started"))))
     loop))
-
-(set-advertised-calling-convention
- 'asyncloop-run
- '(funs &key
-   immediate-break-on-user-activity
-   on-interrupt-discovered
-   log-buffer-name)
- "2023-11-13")
-
-;;;###autoload
-(defun asyncloop-run-function-queue ()
-  (error "This alias was removed, use `asyncloop-run'"))
 
 (provide 'asyncloop)
 

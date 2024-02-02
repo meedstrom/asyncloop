@@ -12,27 +12,19 @@
 [[https://melpa.org/#/asyncloop][file:https://melpa.org/packages/asyncloop-badge.svg]]
 [[https://stable.melpa.org/#/asyncloop][file:https://stable.melpa.org/packages/asyncloop-badge.svg]]
 
-* News
-- 2023-11-13 (Version 0.4.2)
-  - Always let users cancel what Emacs is doing with C-g, if nothing else
-  - Notify when there are simultaneous asyncloops, so user doesn't conclude that one is stuck
-- 2023-11-10 (Version 0.4)
-  - Eliminate 90%+ of performance overhead.  Blazing fast now!
-  - Introduce =:immediate-break-on-user-activity=, which uses =while-no-input= for true instant response to user activity
-  - Introduce =asyncloop-pause= and =asyncloop-resume=
-
-* Intro
 You have a big slow piece of Emacs Lisp, and it blocks Emacs for a painful few seconds.  You rack your brain: how to fix it?  You've already tuned the performance to your best ability.  You've ruled out async.el or shelling out, because your code needs to manipulate the current Emacs state.  So you go look up the libraries [[https://github.com/kiwanami/emacs-deferred/][deferred.el]] (inspired by jsdeferred) or [[https://github.com/skeeto/emacs-aio][emacs-aio]] (inspired by asyncio)...
 
 But wait!  These concepts can be way too sophisticated for your use-case, as they were for mine.  They take time to understand well enough to debug code that uses them.  You need to learn computer-science terms like "iteration deferred object", "errorback" and "callback" before you can make heads or tails of what's going on.  At some point you're questioning the meaning of a function call and you realize you've spent 20 hours implementing something that ought've taken 1 hour.
 
 This package is not so abstract, but it suffices to solve an use case I suspect to be common.
 
-*Use case*
+*Use-case*
 
 Say you've carved up your big slow function into piecemeal functions, each with near-imperceptible latency.  How will you call those mini-functions?  Through a =dolist=?  No, dolists can't be paused midway through, so that'd block just as long as the whole function.  You need some kind of smarter dolist... perhaps something that utilizes =run-with-idle-timer= in between each step...
 
 Enter this library.  It helps you run a series of functions without hanging Emacs, implemented on a chain of timers.
+
+(Technically, it does not put a timer between /every/ function call, but that's an implementation detail)
 
 *Features*
 
@@ -40,23 +32,35 @@ Enter this library.  It helps you run a series of functions without hanging Emac
 
 - gets out of the way when the user is operating Emacs
 
-- begins executing instantly, not, say, after a second of idle time, because sometimes a second is all the time you get, e.g. the time between when user switches to minibuffer and when user begins to type
+- begins instantly, not after a second of idle time or something like that, because sometimes a second is roughly all the time you get
+
+  - (For example: the time between when the user switches to the minibuffer, and when the user begins to type.  It can be nice to maximize the chance your loop completes the relevant work within that tight time-space.)
 
 - zero delay in-between function calls
 
+- near-zero performance overhead
+
 - easy profiling: check the log buffer to see how long each of your functions take
 
-- made with 250 lines of code, no dependencies
+- easy debugging: check the log buffer to see what each of your functions returned
   
+  - (The return value is only used for this purpose, so you have freedom to return whatever you think would be informative.)
+
+- made with 250 lines of code, and no dependencies
+
 *Usage*
 
 The API consists mainly of =asyncloop-run=, consult its docstring.  You may also find reason to call:
 
-- =(asyncloop-remainder LOOP)=: access state of the running loop, so you can modify it with =setf=, =push=, =delq= etc.
-- =(asyncloop-cancel LOOP)=: cancel the running loop
-- =(asyncloop-pause LOOP)=: pause the running loop
+- =(asyncloop-remainder LOOP)=: access state of the running loop, so you can modify it with =setf=, =push=, =pop=, =delete= etc
+  - The value is the list of functions left in the loop.  The docstring of =asyncloop-run= can tell you more.
+  - If you don't know object-oriented programming, this is actually an accessor / "place expression", so modifying its return value affects the place in memory where it got that value, but only if you use generalized setters like =setf= instead of =setq= or =set=.  So you can do =(setf (asyncloop-remainder LOOP) (list t #'other-function #'other-function-2))= and it really will change what the loop does next.
+- =(asyncloop-cancel LOOP)=: cancel the loop
+- =(asyncloop-pause LOOP)=: pause the loop
 - =(asyncloop-resume LOOP)=: resume the loop
-- =(asyncloop-log LOOP &rest ARGS)=: send message to the log buffer.  Note that it's usually more elegant for each mini-function to just pass an informative return value, as that is automatically printed in the log buffer.
+- =(asyncloop-log LOOP &rest ARGS)=: send extra message to the log buffer
+
+*Example*
 
 For an example usage, find the use of "asyncloop-run" inside [[https://github.com/meedstrom/deianira/blob/master/deianira.el][deianira.el]], which gave birth to this library.
 
@@ -66,29 +70,26 @@ What to include in each mini-function?  Consider
 
 - writing a general sanity check and calling it at the top of each function
 - writing a cleanup function and calling it whenever you call =asyncloop-cancel=
-- doing the heavy or bug-prone calculations inside some let-bindings, and then the side-effects at the end
-  
+- doing the heavy or bug-prone calculations inside some let-bindings, and then the side-effects at the end, so that interruptions are likely to happen before any of the side-effects
+
 *Anti-wishlist (won't implement)*
 
-- The argument-passing style enabled in deferred.el among others, where you can use the return value from each function as input for the next function, sounds elegant but I've found it awful for debugging.  Perhaps I was missing some tooling.
+- The "argument-passing style" enabled in deferred.el among others, where you can use the return value from each function as input for the next function, sounds elegant but I've found it awful for debugging.  Perhaps I was missing some tooling?
   - I recommend instead the "crude" approach of keeping state in external variables that you can inspect along the way, making it easy to figure out what work a broken chain did or didn't get done.  This approach also helps clarify the intent of your code because you have to name those variables.
-  - The upside of this design is you can return any value you want and it's printed in the log buffer, making for pleasant debugging.
+  - The upside of ignoring return values is you can return any value you want and it's printed in the log buffer, making for pleasant debugging.
 
 * Bonus chapter: Roll your own
 
-The following example snippet shows a way you can write your own solution.
+The following snippet shows a way you can write your own solution.
 
-When I first wrote asyncloop, I didn't know about either =input-pending-p= or =while-no-input=, which would've helped a lot.  Emacs Lisp is full of power tools laying forgotten under the sofa cushions.
-
-Now, the intent of this package is to give you a nice DX (developer experience) and reduce boilerplate.  But let me also stand on the soapbox of this README so less people have to retrace my steps!
+When I first wrote asyncloop, I didn't know about either =input-pending-p= or =while-no-input=, so I wrote complicated comparisons involving =current-idle-time=...  please don't retrace my steps!
 
 Here's how you do it!
 
 *** Your very own asyncloop in three s-exps
 
 #+begin_src elisp
-(cl-defstruct (queue (:constructor queue-create)
-                     (:copier nil))
+(cl-defstruct queue
   fns)
 
 (defun eat (queue)
@@ -101,8 +102,8 @@ Here's how you do it!
 
 (defun resume (queue)
   (when (while-no-input (with-local-quit (eat queue)))
-    (message "Pausing for a moment")
-    (run-with-idle-timer 1 nil #'resume queue)))
+    (run-with-idle-timer 1 nil #'resume queue)
+    (message "Pausing for a moment")))
 #+end_src
 
 *** Now let's test the program!
@@ -117,12 +118,15 @@ Here's how you do it!
                   (lambda () (sit-for .4) (message "zab"))
                   (lambda () (sit-for .4) (message "rab"))
                   (lambda () (sit-for .4) (message "oof"))))
-  (setq my-queue (queue-create)))
+  (setq my-queue (make-queue)))
 
 ;; Test like this. Watch *Messages* and try to interrupt with some input.
 (progn  
   (setf (queue-fns my-queue) full-fns)
   (resume my-queue))
+
+;; After a C-g, it stops completely. Force-resume with
+(resume my-queue)
 #+end_src
 
 *** Refinement
@@ -144,4 +148,34 @@ The function =eat= uses recursion, which is cool and all but risks tripping =max
     nil))
 #+end_src
 
-Why not just use the timer like that for every call?  That's what I did at first, and found that timers have some overhead -- I don't know if it's extra CPU cycles or just extra waits, but it adds up to a significant slowdown for the whole loop.  By limiting it to once per 100 calls, 99% of that overhead is eliminated.
+Why not just use the timer like that for every call?  That's what I did at first, and found that timers have some overhead -- I doubt it's extra CPU cycles so much as extra waits here and there, i.e. it's not CPU-overhead but time-overhead.  Either way, the loop takes longer to finish.  By limiting it to once per 100 calls, we eliminate 99% of that overhead.
+
+* Bonus chapter 2: Single-function approach
+
+A [[https://emacs.stackexchange.com/a/11048][post by Stefan Monnier]] showed me the way:
+
+#+begin_quote
+Of course, the body of while-no-input can do regular "checkpoints" so as to know where to start next time.
+#+end_quote
+
+In many ways, this is equivalent to having a list of functions, but in case you find it simpler:
+
+#+begin_src elisp
+(defvar stage-1-done nil)  
+(defvar stage-2-done nil)
+(defvar stage-3-done nil)
+(defun big-work ()
+  (while-no-input
+    (unless stage-1-done
+      (work)
+      (work)
+      (setq stage-1-done t)) 
+    (unless stage-2-done
+      (work-more)
+      (work. work never changes)
+      (setq stage-2-done t))
+    (unless stage-3-done
+      ...)))
+#+end_src
+
+Then just re-try =big-work= however often that makes sense, and it'll eventually finish its work.
