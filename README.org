@@ -89,7 +89,7 @@ Here's how you do it!
 *** Your very own asyncloop in three s-exps
 
 #+begin_src elisp
-(cl-defstruct queue
+(cl-defstruct (queue (:constructor queue-create))
   fns)
 
 (defun eat (queue)
@@ -106,10 +106,10 @@ Here's how you do it!
     (message "Pausing for a moment")))
 #+end_src
 
-*** Now let's test the program!
+*** Now let's test the library!
 
 #+begin_src elisp
-;; Background variables
+;; Background variables, eval once.
 (progn
   (setq full-fns (list
                   (lambda () (sit-for .4) (message "foo"))
@@ -118,14 +118,17 @@ Here's how you do it!
                   (lambda () (sit-for .4) (message "zab"))
                   (lambda () (sit-for .4) (message "rab"))
                   (lambda () (sit-for .4) (message "oof"))))
-  (setq my-queue (make-queue)))
+  (setq my-queue (queue-create)))
 
-;; Test like this. Watch *Messages* and try to interrupt with some input.
-(progn  
+;; Test by evalling this. Watch *Messages* and try to
+;; interrupt what it's doing via user activity like moving
+;; the pointer around.
+(progn
   (setf (queue-fns my-queue) full-fns)
   (resume my-queue))
 
-;; After a C-g, it stops completely. Force-resume with
+;; After a C-g, it stops trying to resume. Resume from where
+;; it stopped by evalling this.
 (resume my-queue)
 #+end_src
 
@@ -148,17 +151,17 @@ The function =eat= uses recursion, which is cool and all but risks tripping =max
     nil))
 #+end_src
 
-Why not just use the timer like that for every call?  That's what I did at first, and found that timers have some overhead -- I doubt it's extra CPU cycles so much as extra waits here and there, i.e. it's not CPU-overhead but time-overhead.  Either way, the loop takes longer to finish.  By limiting it to once per 100 calls, we eliminate 99% of that overhead.
+Why not just use the timer like that for every call?  That's what I did at first, and found that the loop takes longer to complete: there's some dead time between each call.  By limiting it to once per 100 calls, we eliminate 99% of that overhead.
 
 * Bonus chapter 2: Single-function approach
 
-A [[https://emacs.stackexchange.com/a/11048][post by Stefan Monnier]] showed me the way:
+Don't like series of functions?  A different method [[https://emacs.stackexchange.com/a/11048][Stefan Monnier mentions in passing]]:
 
 #+begin_quote
 Of course, the body of while-no-input can do regular "checkpoints" so as to know where to start next time.
 #+end_quote
 
-In many ways, this is equivalent to having a list of functions, but in case you find it simpler:
+The keyword is checkpoints.  In many ways, this is equivalent to having a list of functions, but you may find it simpler to reason about.
 
 #+begin_src elisp
 (defvar stage-1-done nil)  
@@ -167,15 +170,15 @@ In many ways, this is equivalent to having a list of functions, but in case you 
 (defun big-work ()
   (while-no-input
     (unless stage-1-done
-      (work)
-      (work)
+      (clean the carpet)
+      (dress the windows)
       (setq stage-1-done t)) 
     (unless stage-2-done
-      (work-more)
+      (make the bed)
       (work. work never changes)
       (setq stage-2-done t))
     (unless stage-3-done
       ...)))
 #+end_src
 
-Then just re-try =big-work= however often that makes sense, and it'll eventually finish its work.
+Then just re-try calling =big-work= however often that makes sense, and it'll eventually finish its work.
