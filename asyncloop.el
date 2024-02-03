@@ -19,7 +19,7 @@
 
 ;; Author: Martin Edström <meedstrom91@gmail.com>
 ;; Created: 2022-10-30
-;; Version: 0.5-snapshot
+;; Version: 0.5
 ;; Keywords: tools
 ;; Homepage: https://github.com/meedstrom/asyncloop
 ;; Package-Requires: ((emacs "28"))
@@ -68,20 +68,25 @@ Expected format:
   "Log a message to the log buffer associated with LOOP.
 Arguments ARGS are the arguments for `format'.
 
-Finally, return the formatted string so you can pass it on to
-`warn' or `error' or the like."
+Finally, return the formatted string so you have the option of
+passing it to `warn' or `error' or the like."
   (declare (indent 1))
   (let ((buf (asyncloop-log-buffer loop))
         (text (apply #'format args)))
     (when (and buf (buffer-live-p buf))
-      (with-current-buffer buf
-        (goto-char (point-max))
-        (insert (format-time-string "%T: ") text)
-        (newline))
-      ;; Improve UX.  Some emacsen look choppy when you watch the log buffer
-      ;; because they don't redisplay on every insertion, instead batching
-      ;; updates in chunks of 10-20 lines.  This reduces that choppiness.
-      (when (get-buffer-window buf 'visible)
+      (save-excursion
+        (with-current-buffer buf
+          (goto-char (point-max))
+          (insert (format-time-string "%T: ") text)
+          (newline)))
+      (when-let ((win (get-buffer-window buf 'visible)))
+        (unless (and (eq buf (current-buffer))
+                     (not (eobp)))
+          (with-selected-window win
+            (goto-char (point-max))))
+        ;; Improve UX.  Some emacsen look choppy when you watch the log buffer
+        ;; because they don't redisplay on every insertion, instead batching
+        ;; updates in chunks of 10-20 lines.  This reduces that choppiness.
         (redisplay)))
     ;; Allow the convenient sexp (warn "%s" (asyncloop-log loop "msg"))
     text))
@@ -198,7 +203,7 @@ This is the intended way to call `asyncloop-eat', because
 
 (defun asyncloop-chomp (loop)
   "Run functions that remain in LOOP, one at a time."
-  (asyncloop-with-slots (remainder scheduled starttime paused immediate-break-on-user-activity) loop
+  (asyncloop-with-slots (remainder starttime paused immediate-break-on-user-activity) loop
     ;; In case the last function pushed t on REMAINDER and got interrupted
     (when (not (functionp (car remainder)))
       (pop remainder))
