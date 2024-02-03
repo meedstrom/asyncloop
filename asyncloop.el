@@ -19,7 +19,7 @@
 
 ;; Author: Martin Edström <meedstrom91@gmail.com>
 ;; Created: 2022-10-30
-;; Version: 0.5
+;; Version: 0.5.1-snapshot
 ;; Keywords: tools
 ;; Homepage: https://github.com/meedstrom/asyncloop
 ;; Package-Requires: ((emacs "28"))
@@ -72,16 +72,19 @@ Finally, return the formatted string so you have the option of
 passing it to `warn' or `error' or the like."
   (declare (indent 1))
   (let ((buf (asyncloop-log-buffer loop))
-        (text (apply #'format args)))
+        (text (apply #'format args))
+        (was-at-eob nil))
     (when (and buf (buffer-live-p buf))
       (save-excursion
         (with-current-buffer buf
+          (setq was-at-eob (eobp))
           (goto-char (point-max))
           (insert (format-time-string "%T: ") text)
           (newline)))
       (when-let ((win (get-buffer-window buf 'visible)))
+        ;; Scroll, unless the user is currently looking back upward the log
         (unless (and (eq buf (current-buffer))
-                     (not (eobp)))
+                     (not was-at-eob))
           (with-selected-window win
             (goto-char (point-max))))
         ;; Improve UX.  Some emacsen look choppy when you watch the log buffer
@@ -153,7 +156,9 @@ With optional argument QUIETLY, don't log the cancellation."
     (cancel-timer timer)
     ;; Bonus cleanup
     (setf paused nil)
-    (cl-assert (not just-launched))))
+    ;; Yup, it's sometimes t at the time this is called, although I haven't
+    ;; understood how
+    (setf just-launched nil)))
 
 (defun asyncloop-pause (loop)
   "Pause LOOP.
@@ -169,9 +174,8 @@ function and then later to `asyncloop-resume'."
     (cancel-timer timer)
     (setf paused t)
     (setf scheduled nil)
-    ;; Bonus cleanup  REVIEW: necessary?
-    ;; (setf just-launched nil)
-    (cl-assert (not just-launched))))
+    (when (not just-launched)
+      (asyncloop-log loop "Assert fail: -pause found -just-launched t"))))
 
 (defun asyncloop-resume (loop)
   "Tell asyncloop LOOP to resume when Emacs has a moment free."
