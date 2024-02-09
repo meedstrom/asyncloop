@@ -19,7 +19,7 @@
 
 ;; Author: Martin Edström <meedstrom91@gmail.com>
 ;; Created: 2022-10-30
-;; Version: 0.5.1
+;; Version: 0.5.2-pre
 ;; Keywords: tools
 ;; Homepage: https://github.com/meedstrom/asyncloop
 ;; Package-Requires: ((emacs "28"))
@@ -40,7 +40,7 @@
   starttime
   log-buffer
   immediate-break-on-user-activity
-  (timer (make-vector 10 nil))
+  (timer (timer-create))
   (paused nil)
   (remainder nil)
   (scheduled nil)
