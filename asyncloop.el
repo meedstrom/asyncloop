@@ -1,6 +1,6 @@
 ;;; asyncloop.el --- Non-blocking series of functions -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2022-2023 Martin Edström
+;; Copyright (C) 2022-2024 Martin Edström
 
 ;; This program is free software: you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -69,7 +69,7 @@ Expected format:
 Arguments ARGS are the arguments for `format'.
 
 Finally, return the formatted string so you have the option of
-passing it to `warn' or `error' or the like."
+passing it to `display-warning' or `error' or the like."
   (declare (indent 1))
   (let ((buf (asyncloop-log-buffer loop))
         (text (apply #'format args))
@@ -100,20 +100,21 @@ passing it to `warn' or `error' or the like."
   (ignore-errors
     (cl-loop
      for (_ . loop) in asyncloop-objects
-     do (asyncloop-cancel loop)
-     and if (derived-mode-p 'asyncloop-log-mode)
-     do (asyncloop-log loop "All asyncloops reset due to quit in buffer %s"
-                       (buffer-name))
-     else do (asyncloop-log loop "All asyncloops reset")))
+     do (progn (asyncloop-cancel loop)
+               (asyncloop-log loop "All asyncloops reset by command"))))
   (setq asyncloop-objects nil))
 
-;; TODO: Cancel only the relevant loop
 (defun asyncloop-keyboard-quit ()
-  "Wrapper for `keyboard-quit' that also cancels all loops.
-Only meant to be bound in asyncloop log buffers."
+  "Wrapper for `keyboard-quit' that also cancels the loop.
+Meant to be bound in asyncloop log buffers."
   (interactive)
   (unwind-protect
-      (asyncloop-reset-all)
+      (cl-loop
+       for (_ . loop) in asyncloop-objects
+       when (eq (current-buffer) (asyncloop-log-buffer loop))
+       do (progn (asyncloop-cancel loop 'quietly)
+                 (asyncloop-log loop
+                   "Reset due to quit in buffer %s" (buffer-name))))
     (keyboard-quit)))
 
 (defvar asyncloop-log-mode-map
@@ -147,7 +148,8 @@ Only meant to be bound in asyncloop log buffers."
 Ensure the loop will restart fresh on the next call to
 `asyncloop-run'.
 
-With optional argument QUIETLY, don't log the cancellation."
+With optional argument QUIETLY, don't log the cancellation, which
+can be elegant if you're going to log a different sentence."
   (asyncloop-with-slots (remainder scheduled timer paused just-launched) loop
     (unless quietly
       (asyncloop-log loop "Loop told to cancel"))
@@ -174,8 +176,8 @@ function and then later to `asyncloop-resume'."
     (cancel-timer timer)
     (setf paused t)
     (setf scheduled nil)
-    (when (not just-launched)
-      (asyncloop-log loop "Assert fail: -pause found -just-launched t"))))
+    ;; I'd like if this clause wasn't necessary
+    (setf just-launched nil)))
 
 (defun asyncloop-resume (loop)
   "Tell asyncloop LOOP to resume when Emacs has a moment free."
@@ -220,7 +222,7 @@ This is the intended way to call `asyncloop-eat', because
      (paused
       (asyncloop-log loop "Loop paused"))
      ;; (This clause only applies if :immediate-break-on-user-activity nil,
-     ;;  because if that's t, we never arrive here anyway)
+     ;; because if that's t, we never arrive here anyway)
      ;; User just did I/O, so free a moment for Emacs to respond
      ((input-pending-p)
       (asyncloop-schedule loop 1))
@@ -247,11 +249,11 @@ Do not call this directly!  Normally, end users are meant to call
 `asyncloop-resume', which see."
   (asyncloop-with-slots (remainder just-launched scheduled immediate-break-on-user-activity) loop
     (setf just-launched nil)
-    ;; Don't proceed if descheduled by `asyncloop-pause', or if some other mystery
-    ;; factor got this to execute again -- it's not just that timers with zero
-    ;; time left seem to have a habit of executing even though `cancel-timer'
-    ;; was called, there is also some sort of spooky action worthy of the
-    ;; X-Files that executes this function for no reason occasionally.
+    ;; Don't proceed if descheduled by `asyncloop-pause', or if some other
+    ;; mystery factor got this to execute again -- it's not just that timers
+    ;; with zero time left seem to execute even though `cancel-timer' was
+    ;; called, there is also some spooky action worthy of the X-Files that
+    ;; executes this function sometimes even if nothing is happening.
     (if (not scheduled)
         (asyncloop-log loop
           "Unscheduled timer activation. Hands off the wheel, ghost!")
@@ -263,11 +265,12 @@ Do not call this directly!  Normally, end users are meant to call
             (when (while-no-input (asyncloop-chomp loop))
               ;; User just did I/O, so free a moment for Emacs to respond
               (asyncloop-schedule loop 1))
-          ;; Without `while-no-input', something should be able to interrupt a
-          ;; hung function, so allow C-g to do so.  I tried `with-timeout' but
-          ;; found it unreliable in the context of several loops active at the
-          ;; same time (not only as the docstring warns that it doesn't run
-          ;; when it should, it also runs when it shouldn't).
+          ;; Here we don't use `while-no-input', but something must still be
+          ;; able to interrupt a hung function, so allow C-g to do so.  I tried
+          ;; to cover the case of hung functions via `with-timeout' but found
+          ;; it unreliable when several asyncloops were active at the same time
+          ;; (not only what the docstring warns about, that it doesn't run when
+          ;; it should---it also runs when it shouldn't).  So I cover with C-g.
           ;;
           ;; The drawback is that C-g could hit at exactly the wrong time,
           ;; interrupting a function at a non-ideal point in its execution.
@@ -276,14 +279,13 @@ Do not call this directly!  Normally, end users are meant to call
           ;; loop, as that'll probably lead to more correctness.
           (when (null (with-local-quit (asyncloop-chomp loop)))
             (asyncloop-cancel loop 'quietly)
-            (asyncloop-log loop "Interrupted by C-g, cancelling")))))))
+            (asyncloop-log loop "Interrupted by a quit, cancelling loop")))))))
 
 (defun asyncloop-notify-simultaneity (this-loop)
   "Write in active loops' logs that multiple loops are active.
 This is done so when someone watches one of the logs, they don't
 conclude that it got stuck because it seems to do no work."
   (cl-loop
-   with others = nil
    for (_ . loop) in asyncloop-objects
    when (member (asyncloop-timer loop) timer-idle-list)
    collect loop into others
@@ -331,12 +333,12 @@ already running loop finish.
 
 If the previous invocation with the same input seems to have been
 interrupted by an error and left in an incomplete state, it will
-first call the optional function ON-INTERRUPT-DISCOVERED, then
-resume the loop, picking up where it was left off.  To reiterate,
-this recovery will not happen at the moment the loop is
-interrupted, only the next time `asyncloop-run' is invoked (which
-could be a long while or never, depending on what hook you put it
-on).
+first call the optional function ON-INTERRUPT-DISCOVERED if
+provided, then resume the loop, picking up where it left off.
+To reiterate, this recovery will not happen at the moment the
+loop is interrupted, only the next time `asyncloop-run' is
+invoked (which could be a long while or never, depending on what
+hook you put it on).
 
 By default, ON-INTERRUPT-DISCOVERED is nil, but another
 reasonable value is #\\='asyncloop-cancel.  If you are having
@@ -372,20 +374,18 @@ item at a time by `pop', place that form earlier than the above
 form.
 
 The accessor `asyncloop-remainder' returns the list of functions
-left to run.  You can manipulate the list however you like, but
-note that it includes the function currently being run, as the
-first element!  The list will undergo a `pop' right after the
-function completes.  (That's why the above form works: the symbol
-t is just a placeholder to absorb the coming `pop'.)
+left to run.  You can manipulate the list however you like, even
+overwrite it with a new list:
 
-Somewhat nonintuitive, but it had to be designed this way for
-robustness to interruption.
-
-A takeaway: if you wish to set the list to something entirely
-different via `setf', include t as first element:
-
-  \(setf \(asyncloop-remainder LOOP-OBJECT)
+  \(setf \(asyncloop-remainder LOOP)
          \(list t #'function-1 #'function-2 #'function-3))
+
+Note a somewhat surprising design that was needed to ensure it's
+robust to interruption: the list includes the function currently
+being run, as the first element!  The list will undergo a `pop'
+after the function completes, which is how asyncloop moves on to
+the next function.  You'll note the above forms use the symbol t
+as a placeholder to absorb the coming `pop'.
 
 Finally, optional string LOG-BUFFER-NAME says to create a buffer
 of log messages with that name.  A reasonable value is

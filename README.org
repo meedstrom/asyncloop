@@ -121,8 +121,8 @@ Here's how you do it!
   (setq my-queue (queue-create)))
 
 ;; Test by evalling this. Watch *Messages* and try to
-;; interrupt what it's doing via user activity like moving
-;; the pointer around.
+;; interrupt what it's doing via user activity such as
+;; moving the text cursor around.
 (progn
   (setf (queue-fns my-queue) full-fns)
   (resume my-queue))
@@ -163,6 +163,8 @@ Of course, the body of while-no-input can do regular "checkpoints" so as to know
 
 The keyword is checkpoints.  In many ways, this is equivalent to having a list of functions, but you may find it simpler to reason about.
 
+Something like this skeleton:
+
 #+begin_src elisp
 (defvar stage-1-done nil)  
 (defvar stage-2-done nil)
@@ -181,4 +183,4 @@ The keyword is checkpoints.  In many ways, this is equivalent to having a list o
       ...)))
 #+end_src
 
-Then just re-try calling =big-work= however often that makes sense, and it'll eventually finish its work.
+Then just re-try calling =big-work= however often that makes sense, and it'll eventually reach the last stage.
