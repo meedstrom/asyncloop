@@ -19,7 +19,7 @@
 
 ;; Author: Martin Edström <meedstrom91@gmail.com>
 ;; Created: 2022-10-30
-;; Version: 1.0
+;; Version: 1.1-pre
 ;; Keywords: tools
 ;; Homepage: https://github.com/meedstrom/asyncloop
 ;; Package-Requires: ((emacs "28"))
@@ -185,7 +185,10 @@ function and then later to `asyncloop-resume'."
     (setf paused nil)
     (asyncloop-log loop "Loop told to resume")
     (asyncloop-schedule loop)
-    (cl-assert (not just-launched))))
+    (when just-launched
+      (message
+       "%s" (asyncloop-log loop
+              "Please report bug: (asyncloop-just-launched loop) was t")))))
 
 (defun asyncloop-schedule (loop &optional secs)
   "Prep asyncloop LOOP to resume when Emacs has a moment.
