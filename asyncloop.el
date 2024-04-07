@@ -83,8 +83,7 @@ passing it to `display-warning' or `error' or the like."
           (newline)))
       (when-let ((win (get-buffer-window buf 'visible)))
         ;; Scroll, unless the user is currently looking back upward the log
-        (unless (and (eq buf (current-buffer))
-                     (not was-at-eob))
+        (when (or was-at-eob (not (eq buf (current-buffer))))
           (with-selected-window win
             (goto-char (point-max))))
         ;; Improve UX.  Some emacsen look choppy when you watch the log buffer
@@ -153,9 +152,9 @@ can be elegant if you're going to log a different sentence."
   (asyncloop-with-slots (remainder scheduled timer paused just-launched) loop
     (unless quietly
       (asyncloop-log loop "Loop told to cancel"))
+    (cancel-timer timer)
     (setf remainder nil)
     (setf scheduled nil)
-    (cancel-timer timer)
     ;; Bonus cleanup
     (setf paused nil)
     ;; Yup, it's sometimes t at the time this is called, although I haven't
