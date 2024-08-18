@@ -127,7 +127,7 @@ Meant to be bound in asyncloop log buffers."
   (setq buffer-read-only nil))
 
 (defun asyncloop-clock-funcall (loop fn)
-  "Run FN; log result and time elapsed to LOOP's log buffer."
+  "Run FN; log result and time elapsed to LOOP\\='s log buffer."
   (let* ((fn-name (if (symbolp fn) fn 'lambda))
          (then (current-time))
          (result (condition-case err
@@ -147,8 +147,8 @@ Meant to be bound in asyncloop log buffers."
 Ensure the loop will restart fresh on the next call to
 `asyncloop-run'.
 
-With optional argument QUIETLY, don't log the cancellation, which
-can be elegant if you're going to log a different sentence."
+With optional argument QUIETLY, don\\='t log the cancellation, which
+can be elegant if you\\='re going to log a different sentence."
   (asyncloop-with-slots (remainder scheduled timer paused just-launched) loop
     (unless quietly
       (asyncloop-log loop "Loop told to cancel"))
@@ -310,7 +310,7 @@ Optional argument IMMEDIATE-BREAK-ON-USER-ACTIVITY says to use
 `while-no-input' internally, which means that user activity can
 interrupt the loop at exactly any point during execution.  The
 gotcha is that you need to be more careful writing each function
-in FUNS so that interruption midway won't leave your program in
+in FUNS so that interruption midway won\\='t leave your program in
 an unintended state.
 
 As a tip, you could do all heavy or bug-prone calculations inside
@@ -328,7 +328,7 @@ perceptible amount of time to complete, like 0.02s or longer.
 
 The loop as a whole refuses to start twice with the same input if
 the last invocation has not yet completed.  That means that if,
-perhaps via a hook that triggers often, it's invoked several
+perhaps via a hook that triggers often, it\\='s invoked several
 times in a short timeframe, only the first invocation is likely
 to do anything, and the rest will no-op in favor of letting the
 already running loop finish.
