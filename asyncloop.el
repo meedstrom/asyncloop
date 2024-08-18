@@ -254,8 +254,8 @@ Do not call this directly!  Normally, end users are meant to call
     ;; Don't proceed if descheduled by `asyncloop-pause', or if some other
     ;; mystery factor got this to execute again -- it's not just that timers
     ;; with zero time left seem to execute even though `cancel-timer' was
-    ;; called, there is also some spooky action worthy of the X-Files that
-    ;; executes this function sometimes even if nothing is happening.
+    ;; called, there is also some spooky action that executes this function
+    ;; sometimes even if nothing is happening (cue X-Files tune).
     (if (not scheduled)
         (asyncloop-log loop
           "Unscheduled timer activation. Hands off the wheel, ghost!")
@@ -313,17 +313,17 @@ gotcha is that you need to be more careful writing each function
 in FUNS so that interruption midway won't leave your program in
 an unintended state.
 
-An interrupted function remains on schedule to run again, unless
-you've manipulated the loop (more on this further below).
-
 As a tip, you could do all heavy or bug-prone calculations inside
 some `let' bindings, then carry out side-effects via simple
 `setq', `push', `pop' calls, which are practically instant.
 
-If instead, IMMEDIATE-BREAK-ON-USER-ACTIVITY is left at nil, you
-have fewer things to worry about as any given function will be
-allowed to complete before Emacs responds to user activity.  The
-drawback is that you may annoy the user if that function takes a
+An interrupted function remains on schedule to run again, unless
+you've manipulated the loop (more on this further below).
+
+If IMMEDIATE-BREAK-ON-USER-ACTIVITY is left at nil, you have
+fewer things to worry about as any given function will be allowed
+to complete before Emacs responds to user activity.  The drawback
+is that you may annoy the user if that function takes a
 perceptible amount of time to complete, like 0.02s or longer.
 
 The loop as a whole refuses to start twice with the same input if
@@ -380,23 +380,25 @@ left to run.  You can manipulate the list however you like, even
 overwrite it with a new list:
 
   \(setf \(asyncloop-remainder LOOP)
-         \(list t #'function-1 #'function-2 #'function-3))
+        \(list t #'function-1 #'function-2 #'function-3))
 
-Note a somewhat surprising design that was needed to ensure it's
-robust to interruption: the list includes the function currently
-being run, as the first element!  The list will undergo a `pop'
-after the function completes, which is how asyncloop moves on to
-the next function.  You'll note the above forms use the symbol t
-as a placeholder to absorb the coming `pop'.
+Note a somewhat surprising design that was needed to ensure
+it\\='s robust to interruption: the list includes the function
+currently being run, as the first element!  \(So it is not only
+the remainder.)  The list will undergo a `pop' after the function
+completes, which is how asyncloop moves on to the next function.
+You'll note the above forms use the symbol t as fodder to absorb
+the coming `pop'.
 
 Finally, optional string LOG-BUFFER-NAME says to create a buffer
 of log messages with that name.  A reasonable value is
 \"*your-package*\".
 
 It does not matter what the functions in FUNS return, but the
-log buffer prints the return values, so by returning something
-interesting (I suggest a short string constructed by `format'),
-you can improve your debugging experience."
+aforementioned log buffer prints the return values, so by
+returning something interesting (I suggest a short string
+constructed by `format'), you can improve your debugging
+experience."
   (declare (indent defun))
   (cl-assert funs)
   (dolist (fn funs)
